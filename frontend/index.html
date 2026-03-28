@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Black Book</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════ SIDEBAR ══ -->
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <h1 class="app-title">Black Book</h1>
+    <p class="app-subtitle">Personal Intelligence</p>
+  </div>
+
+  <div class="sidebar-search">
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 20 20" fill="none">
+        <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M13.5 13.5L17 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchInput" type="text" placeholder="Search people & notes…" autocomplete="off" />
+      <button id="clearSearch" class="clear-search" aria-label="Clear search" hidden>
+        <svg viewBox="0 0 14 14" fill="none"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="sidebar-actions">
+    <button id="addPersonBtn" class="btn-add-person">
+      <svg viewBox="0 0 20 20" fill="none">
+        <path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      Add Person
+    </button>
+  </div>
+
+  <div class="sidebar-list-label" id="listLabel">All Contacts</div>
+  <div id="peopleList" class="people-list"></div>
+</aside>
+
+<!-- ═══════════════════════════════════════════════════ MAIN ══ -->
+<main class="main-panel" id="mainPanel">
+  <!-- Empty state -->
+  <div id="emptyState" class="empty-state">
+    <div class="empty-icon">
+      <svg viewBox="0 0 80 80" fill="none">
+        <rect x="15" y="10" width="50" height="60" rx="4" stroke="currentColor" stroke-width="2"/>
+        <path d="M25 25h30M25 35h30M25 45h20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="55" cy="55" r="10" fill="#0a0a0a" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M51 55h8M55 51v8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <h2>Your Black Book</h2>
+    <p>Select a contact to view their profile,<br>or add a new person to get started.</p>
+    <button id="emptyAddBtn" class="btn-primary">Add Your First Contact</button>
+  </div>
+
+  <!-- Person detail (hidden until selected) -->
+  <div id="personDetail" class="person-detail" hidden>
+
+    <!-- Person header -->
+    <div class="person-header">
+      <div class="person-header-left">
+        <div class="person-avatar" id="personAvatar"></div>
+        <div class="person-meta">
+          <h2 id="personName"></h2>
+          <div class="person-meta-row">
+            <span id="personRelBadge" class="rel-badge"></span>
+            <div id="personTags" class="tags-row"></div>
+          </div>
+        </div>
+      </div>
+      <div class="person-header-actions">
+        <button id="editPersonBtn" class="btn-icon" title="Edit contact">
+          <svg viewBox="0 0 20 20" fill="none">
+            <path d="M14.5 3.5l2 2L6 16H4v-2L14.5 3.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <button id="deletePersonBtn" class="btn-icon btn-danger" title="Delete contact">
+          <svg viewBox="0 0 20 20" fill="none">
+            <path d="M5 7h10l-1 9H6L5 7z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            <path d="M3 7h14M8 7V5h4v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Tab bar -->
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="notes">Notes</button>
+      <button class="tab-btn" data-tab="briefing">Briefing</button>
+    </div>
+
+    <!-- Notes tab -->
+    <div id="tabNotes" class="tab-content">
+      <div id="notesList" class="notes-list"></div>
+
+      <!-- Add note area -->
+      <div class="add-note-area">
+        <div class="add-note-header">
+          <span class="add-note-label">New Note</span>
+          <select id="noteType" class="note-type-select">
+            <option value="general">General</option>
+            <option value="meeting">Meeting</option>
+            <option value="personal">Personal</option>
+            <option value="context">Context</option>
+          </select>
+        </div>
+        <div class="textarea-wrap">
+          <textarea id="noteContent" placeholder="Start typing, or press the mic to dictate…" rows="3"></textarea>
+        </div>
+        <div class="add-note-footer">
+          <button id="micBtn" class="btn-mic" title="Start voice dictation" aria-label="Toggle voice dictation">
+            <svg class="mic-icon" viewBox="0 0 24 24" fill="none">
+              <rect x="8" y="2" width="8" height="13" rx="4" stroke="currentColor" stroke-width="1.8"/>
+              <path d="M5 10a7 7 0 0014 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              <path d="M12 20v-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              <path d="M9 20h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            <span class="mic-ripple"></span>
+          </button>
+          <button id="submitNote" class="btn-primary">Save Note</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Briefing tab -->
+    <div id="tabBriefing" class="tab-content" hidden>
+      <div id="briefingContent" class="briefing-content"></div>
+    </div>
+
+  </div>
+</main>
+
+
+<!-- ═══════════════════════════════════ MODAL: Add/Edit Person ══ -->
+<div id="personModal" class="modal-overlay" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modalTitle">Add Person</h3>
+      <button class="modal-close" id="closePersonModal" aria-label="Close">
+        <svg viewBox="0 0 14 14" fill="none"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <label class="form-label">Name <span class="req">*</span></label>
+      <input id="modalName" type="text" class="form-input" placeholder="Full name" />
+
+      <label class="form-label">Relationship</label>
+      <select id="modalRelationship" class="form-input">
+        <option value="contact">Contact</option>
+        <option value="friend">Friend</option>
+        <option value="colleague">Colleague</option>
+        <option value="family">Family</option>
+        <option value="other">Other</option>
+      </select>
+
+      <label class="form-label">Tags <span class="form-hint">(comma-separated)</span></label>
+      <input id="modalTags" type="text" class="form-input" placeholder="investor, NYC, tech…" />
+    </div>
+    <div class="modal-footer">
+      <button id="cancelPersonModal" class="btn-ghost">Cancel</button>
+      <button id="savePersonBtn" class="btn-primary">Save</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════ MODAL: Confirm Delete ══ -->
+<div id="confirmModal" class="modal-overlay" hidden>
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <h3 id="confirmTitle">Confirm Delete</h3>
+    </div>
+    <div class="modal-body">
+      <p id="confirmMessage" class="confirm-msg"></p>
+    </div>
+    <div class="modal-footer">
+      <button id="confirmCancel" class="btn-ghost">Cancel</button>
+      <button id="confirmOk" class="btn-danger-solid">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
