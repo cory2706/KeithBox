@@ -1,642 +1,843 @@
 /* ═══════════════════════════════════════════════════════════════
-   Black Book — app.js
+   Meal Planner & Shopping List — app.js
    ═══════════════════════════════════════════════════════════════ */
 
-'use strict';
+const CATEGORIES = ["Produce", "Meat & Fish", "Dairy & Eggs", "Bakery", "Store Cupboard", "Frozen", "Drinks", "Other"];
 
-// ── State ─────────────────────────────────────────────────────────
 const state = {
-  people: [],
-  selectedId: null,
-  selectedPerson: null,
-  activeTab: 'notes',
-  searching: false,
+  recipes: [],
+  staples: [],
+  suggestions: [],
+  planSelections: {},      // recipe_id -> nights
+  currentShoppingList: null,
+  checkedItems: {},        // persisted per-plan checked state
+  macroPlan: null,
+  pendingRecipePhoto: null, // File object staged for a not-yet-created recipe
 };
 
-// ── DOM refs ──────────────────────────────────────────────────────
-const $ = id => document.getElementById(id);
+// ── API helper ────────────────────────────────────────────────────────────
 
-const els = {
-  searchInput:      $('searchInput'),
-  clearSearch:      $('clearSearch'),
-  addPersonBtn:     $('addPersonBtn'),
-  emptyAddBtn:      $('emptyAddBtn'),
-  peopleList:       $('peopleList'),
-  listLabel:        $('listLabel'),
-  emptyState:       $('emptyState'),
-  personDetail:     $('personDetail'),
-  personAvatar:     $('personAvatar'),
-  personName:       $('personName'),
-  personRelBadge:   $('personRelBadge'),
-  personTags:       $('personTags'),
-  editPersonBtn:    $('editPersonBtn'),
-  deletePersonBtn:  $('deletePersonBtn'),
-  notesList:        $('notesList'),
-  noteContent:      $('noteContent'),
-  noteType:         $('noteType'),
-  micBtn:           $('micBtn'),
-  submitNote:       $('submitNote'),
-  tabBtns:          document.querySelectorAll('.tab-btn'),
-  tabNotes:         $('tabNotes'),
-  tabBriefing:      $('tabBriefing'),
-  briefingContent:  $('briefingContent'),
-  // Modals
-  personModal:      $('personModal'),
-  modalTitle:       $('modalTitle'),
-  modalName:        $('modalName'),
-  modalRelationship:$('modalRelationship'),
-  modalTags:        $('modalTags'),
-  closePersonModal: $('closePersonModal'),
-  cancelPersonModal:$('cancelPersonModal'),
-  savePersonBtn:    $('savePersonBtn'),
-  confirmModal:     $('confirmModal'),
-  confirmTitle:     $('confirmTitle'),
-  confirmMessage:   $('confirmMessage'),
-  confirmCancel:    $('confirmCancel'),
-  confirmOk:        $('confirmOk'),
-  toast:            $('toast'),
-};
-
-// ── Helpers ───────────────────────────────────────────────────────
-
-function initials(name) {
-  return (name || '?')
-    .split(/\s+/)
-    .slice(0, 2)
-    .map(w => w[0]?.toUpperCase() || '')
-    .join('');
-}
-
-function formatDate(iso) {
-  if (!iso) return '';
-  const d = new Date(iso + (iso.endsWith('Z') ? '' : 'Z'));
-  return d.toLocaleString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
-    hour: 'numeric', minute: '2-digit',
-  });
-}
-
-function relClass(rel) {
-  const map = { friend:'rel-friend', colleague:'rel-colleague', family:'rel-family', contact:'rel-contact', other:'rel-other' };
-  return map[rel] || 'rel-contact';
-}
-
-function ntClass(nt) {
-  const map = { general:'nt-general', meeting:'nt-meeting', personal:'nt-personal', context:'nt-context' };
-  return map[nt] || 'nt-general';
-}
-
-function ntLabel(nt) {
-  const map = { general:'General', meeting:'Meeting', personal:'Personal', context:'Context' };
-  return map[nt] || 'General';
-}
-
-function escHtml(str) {
-  return String(str)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
-}
-
-// ── Toast ─────────────────────────────────────────────────────────
-let toastTimer = null;
-
-function showToast(msg, type = 'success') {
-  const t = els.toast;
-  t.textContent = msg;
-  t.className = `toast toast-${type}`;
-  t.hidden = false;
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 3000);
-}
-
-// ── API ───────────────────────────────────────────────────────────
-
-async function apiFetch(url, opts = {}) {
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
-    ...opts,
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || 'Request failed');
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch (_) {}
+    throw new Error(detail);
   }
   if (res.status === 204) return null;
   return res.json();
 }
 
-const api = {
-  listPeople:   ()        => apiFetch('/api/people'),
-  createPerson: body      => apiFetch('/api/people', { method:'POST', body: JSON.stringify(body) }),
-  getPerson:    id        => apiFetch(`/api/people/${id}`),
-  updatePerson: (id,body) => apiFetch(`/api/people/${id}`, { method:'PUT', body: JSON.stringify(body) }),
-  deletePerson: id        => apiFetch(`/api/people/${id}`, { method:'DELETE' }),
-  addNote:      (id,body) => apiFetch(`/api/people/${id}/notes`, { method:'POST', body: JSON.stringify(body) }),
-  deleteNote:   id        => apiFetch(`/api/notes/${id}`, { method:'DELETE' }),
-  search:       q         => apiFetch(`/api/search?q=${encodeURIComponent(q)}`),
-  briefing:     id        => apiFetch(`/api/people/${id}/briefing`),
-};
-
-// ── Render sidebar list ───────────────────────────────────────────
-
-function renderPeopleList(people) {
-  const el = els.peopleList;
-  if (!people.length) {
-    el.innerHTML = `<div class="list-empty">${
-      state.searching ? 'No results found.' : 'No contacts yet.<br>Add someone to begin.'
-    }</div>`;
-    return;
+async function apiUpload(path, file, method = "POST") {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(path, { method, body: formData });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch (_) {}
+    throw new Error(detail);
   }
+  return res.json();
+}
 
-  el.innerHTML = people.map(p => {
-    const active = p.id === state.selectedId ? ' active' : '';
-    return `<div class="person-card${active}" data-id="${p.id}">
-      <div class="card-avatar">${escHtml(initials(p.name))}</div>
-      <div class="card-info">
-        <div class="card-name">${escHtml(p.name)}</div>
-        <div class="card-meta">
-          <span class="rel-badge ${relClass(p.relationship)}">${escHtml(p.relationship)}</span>
-          <span class="card-note-count">${p.note_count} note${p.note_count === 1 ? '' : 's'}</span>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
+// ── Toast ─────────────────────────────────────────────────────────────────
 
-  el.querySelectorAll('.person-card').forEach(card => {
-    card.addEventListener('click', () => selectPerson(parseInt(card.dataset.id)));
+let toastTimer;
+function toast(msg, isError = false) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.toggle("toast-error", isError);
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 2800);
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────
+
+function initTabs() {
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });
 }
-
-// ── Select / show person ──────────────────────────────────────────
-
-async function selectPerson(id) {
-  state.selectedId = id;
-
-  // Update active card highlight
-  els.peopleList.querySelectorAll('.person-card').forEach(c => {
-    c.classList.toggle('active', parseInt(c.dataset.id) === id);
-  });
-
-  try {
-    const person = await api.getPerson(id);
-    state.selectedPerson = person;
-    showPersonDetail(person);
-  } catch (e) {
-    showToast(e.message, 'error');
-  }
-}
-
-function showPersonDetail(person) {
-  els.emptyState.hidden = true;
-  els.personDetail.hidden = false;
-
-  // Avatar + header
-  els.personAvatar.textContent = initials(person.name);
-  els.personName.textContent = person.name;
-
-  els.personRelBadge.textContent = person.relationship;
-  els.personRelBadge.className = `rel-badge ${relClass(person.relationship)}`;
-
-  // Tags
-  const tags = (person.tags || '').split(',').map(t => t.trim()).filter(Boolean);
-  els.personTags.innerHTML = tags.map(t => `<span class="tag-pill">${escHtml(t)}</span>`).join('');
-
-  renderNotes(person.notes || []);
-
-  // Reset to notes tab
-  switchTab('notes');
-}
-
-// ── Notes rendering ───────────────────────────────────────────────
-
-function renderNotes(notes) {
-  if (!notes.length) {
-    els.notesList.innerHTML = `<div class="notes-empty">No notes yet.<br>Add one below.</div>`;
-    return;
-  }
-
-  els.notesList.innerHTML = notes.map(n => `
-    <div class="note-card" data-note-id="${n.id}">
-      <div class="note-card-header">
-        <span class="note-type-badge ${ntClass(n.note_type)}">${ntLabel(n.note_type)}</span>
-        <span class="note-timestamp">${formatDate(n.created_at)}</span>
-      </div>
-      <div class="note-content">${escHtml(n.content)}</div>
-      <button class="note-delete-btn" data-note-id="${n.id}" title="Delete note">
-        <svg viewBox="0 0 14 14" fill="none">
-          <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-        </svg>
-      </button>
-    </div>
-  `).join('');
-
-  els.notesList.querySelectorAll('.note-delete-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      confirmDelete(
-        'Delete Note',
-        'Are you sure you want to delete this note? This cannot be undone.',
-        async () => {
-          try {
-            await api.deleteNote(parseInt(btn.dataset.noteId));
-            await refreshSelectedPerson();
-            showToast('Note deleted.');
-          } catch (err) {
-            showToast(err.message, 'error');
-          }
-        }
-      );
-    });
-  });
-}
-
-// ── Tab switching ─────────────────────────────────────────────────
 
 function switchTab(tab) {
-  state.activeTab = tab;
-  els.tabBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
-  els.tabNotes.hidden     = (tab !== 'notes');
-  els.tabBriefing.hidden  = (tab !== 'briefing');
-
-  if (tab === 'briefing' && state.selectedId) {
-    loadBriefing(state.selectedId);
-  }
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === `tab-${tab}`));
 }
 
-els.tabBtns.forEach(btn => {
-  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
-});
+// ── Modals ────────────────────────────────────────────────────────────────
 
-// ── Briefing ──────────────────────────────────────────────────────
+function openModal(id) { document.getElementById(id).classList.add("show"); }
+function closeModal(id) { document.getElementById(id).classList.remove("show"); }
 
-async function loadBriefing(personId) {
-  els.briefingContent.innerHTML = '<div class="briefing-empty">Loading briefing…</div>';
-  try {
-    const data = await api.briefing(personId);
-    renderBriefing(data);
-  } catch (e) {
-    els.briefingContent.innerHTML = `<div class="briefing-empty">Failed to load briefing.</div>`;
-    showToast(e.message, 'error');
-  }
+function initModals() {
+  document.querySelectorAll("[data-close]").forEach(btn => {
+    btn.addEventListener("click", () => closeModal(btn.dataset.close));
+  });
+  document.querySelectorAll(".modal-backdrop").forEach(bd => {
+    bd.addEventListener("click", e => { if (e.target === bd) closeModal(bd.id); });
+  });
 }
 
-function renderBriefing(data) {
-  const { person, sections, total_notes } = data;
-  const tags = person.tags || [];
+// ── Macro helpers (mirrors backend logic for live preview) ─────────────────
 
-  const tagsHtml = tags.map(t => `<span class="tag-pill">${escHtml(t)}</span>`).join('');
-  const relHtml  = `<span class="rel-badge ${relClass(person.relationship)}">${escHtml(person.relationship)}</span>`;
+function computeMacros(calories, carbs, fat, protein) {
+  const macroCals = carbs * 4 + fat * 9 + protein * 4;
+  const totalCals = calories || macroCals;
+  if (totalCals <= 0) return { calories: 0, carb_pct: 0, fat_pct: 0, protein_pct: 0, is_high_carb_low_fat: false };
+  const carb_pct = Math.round((carbs * 4 / totalCals) * 1000) / 10;
+  const fat_pct = Math.round((fat * 9 / totalCals) * 1000) / 10;
+  const protein_pct = Math.round((protein * 4 / totalCals) * 1000) / 10;
+  return {
+    calories: Math.round(totalCals * 10) / 10, carb_pct, fat_pct, protein_pct,
+    is_high_carb_low_fat: fat_pct <= 20 && carb_pct >= 55,
+  };
+}
 
-  let html = `
-    <div class="briefing-header">
-      <div class="briefing-title">${escHtml(person.name)}</div>
-      <div class="briefing-meta">
-        ${relHtml}
-        ${tagsHtml}
-        <span>${total_notes} note${total_notes === 1 ? '' : 's'}</span>
-        <span>Generated ${formatDate(new Date().toISOString())}</span>
+// ── Recipes ───────────────────────────────────────────────────────────────
+
+async function loadRecipes() {
+  state.recipes = await api("/api/recipes");
+  renderRecipes();
+}
+
+function renderRecipes() {
+  const container = document.getElementById("recipeList");
+  if (state.recipes.length === 0) {
+    container.innerHTML = `<p class="empty-state">No recipes yet — add your first one.</p>`;
+    return;
+  }
+  container.innerHTML = state.recipes.map(r => `
+    <div class="recipe-card">
+      ${r.photo_path ? `<img class="recipe-photo" src="${r.photo_path}" alt="${escapeAttr(r.name)}">` : ""}
+      <div class="recipe-card-header">
+        <h3>${escapeHtml(r.name)}</h3>
+        ${r.macros.is_high_carb_low_fat ? '<span class="badge badge-hclf">HCLF</span>' : ""}
+      </div>
+      <p class="muted small">Serves ${r.servings}${r.macros.calories ? ` · ${r.macros.calories} kcal/serving` : ""}</p>
+      <div class="macro-bar">
+        <span class="macro-chip macro-carb">Carbs ${r.macros.carb_pct}%</span>
+        <span class="macro-chip macro-fat">Fat ${r.macros.fat_pct}%</span>
+        <span class="macro-chip macro-protein">Protein ${r.macros.protein_pct}%</span>
+      </div>
+      <p class="ingredient-count">${r.ingredients.length} ingredient${r.ingredients.length === 1 ? "" : "s"}</p>
+      <div class="card-actions">
+        <button class="btn btn-small" data-edit-recipe="${r.id}">Edit</button>
+        <button class="btn btn-small btn-danger" data-delete-recipe="${r.id}">Delete</button>
       </div>
     </div>
-  `;
+  `).join("");
 
-  if (!sections.length) {
-    html += `<div class="briefing-empty">No notes to display.<br>Add notes to generate a briefing.</div>`;
-  } else {
-    sections.forEach(section => {
-      html += `<div class="briefing-section">
-        <div class="briefing-section-title">${escHtml(section.label)}</div>`;
-      section.notes.forEach(note => {
-        html += `<div class="briefing-note ${ntClass(note.note_type)}">
-          <div class="briefing-note-text">${escHtml(note.content)}</div>
-          <div class="briefing-note-ts">${formatDate(note.created_at)}</div>
-        </div>`;
-      });
-      html += `</div>`;
+  container.querySelectorAll("[data-edit-recipe]").forEach(btn => {
+    btn.addEventListener("click", () => openRecipeModal(Number(btn.dataset.editRecipe)));
+  });
+  container.querySelectorAll("[data-delete-recipe]").forEach(btn => {
+    btn.addEventListener("click", () => deleteRecipe(Number(btn.dataset.deleteRecipe)));
+  });
+}
+
+function ingredientRowHtml(ing = {}) {
+  const catOptions = CATEGORIES.map(c => `<option value="${c}" ${ing.category === c ? "selected" : ""}>${c}</option>`).join("");
+  return `
+    <div class="ingredient-row">
+      <input type="text" class="ing-name" placeholder="Ingredient" value="${escapeAttr(ing.name || "")}">
+      <input type="number" class="ing-qty" placeholder="Qty" min="0" step="any" value="${ing.quantity ?? ""}">
+      <input type="text" class="ing-unit" placeholder="Unit" value="${escapeAttr(ing.unit || "")}">
+      <select class="ing-category">${catOptions}</select>
+      <button type="button" class="btn btn-small btn-danger ing-remove">&times;</button>
+    </div>
+  `;
+}
+
+function addIngredientRow(ing) {
+  const wrap = document.getElementById("ingredientRows");
+  const div = document.createElement("div");
+  div.innerHTML = ingredientRowHtml(ing);
+  const row = div.firstElementChild;
+  row.querySelector(".ing-remove").addEventListener("click", () => row.remove());
+  wrap.appendChild(row);
+}
+
+function renderRecipePhotoPreview(photoUrl) {
+  const container = document.getElementById("recipePhotoPreview");
+  document.getElementById("recipePhotoInput").value = "";
+  if (!photoUrl) {
+    container.innerHTML = `<p class="muted small">No photo yet.</p>`;
+    return;
+  }
+  container.innerHTML = `
+    <div class="photo-preview-wrap">
+      <img src="${photoUrl}" alt="Recipe photo" class="photo-preview">
+      <button type="button" class="btn btn-small btn-danger" id="btnRemoveRecipePhoto">Remove photo</button>
+    </div>
+  `;
+  const removeBtn = document.getElementById("btnRemoveRecipePhoto");
+  if (removeBtn) {
+    removeBtn.addEventListener("click", async () => {
+      const id = document.getElementById("recipeId").value;
+      if (id) {
+        try {
+          await api(`/api/recipes/${id}/photo`, { method: "DELETE" });
+          await loadRecipes();
+          renderRecipePhotoPreview(null);
+          toast("Photo removed");
+        } catch (e) {
+          toast(e.message, true);
+        }
+      } else {
+        state.pendingRecipePhoto = null;
+        renderRecipePhotoPreview(null);
+      }
     });
   }
-
-  els.briefingContent.innerHTML = html;
 }
 
-// ── Load / refresh all people ─────────────────────────────────────
+function openRecipeModal(recipeId = null) {
+  document.getElementById("recipeId").value = recipeId || "";
+  document.getElementById("ingredientRows").innerHTML = "";
+  state.pendingRecipePhoto = null;
 
-async function loadPeople() {
-  try {
-    state.people = await api.listPeople();
-    renderPeopleList(state.people);
-    els.listLabel.textContent = 'All Contacts';
-    state.searching = false;
-  } catch (e) {
-    showToast('Failed to load contacts.', 'error');
+  if (recipeId) {
+    const r = state.recipes.find(x => x.id === recipeId);
+    document.getElementById("recipeModalTitle").textContent = "Edit recipe";
+    document.getElementById("recipeName").value = r.name;
+    document.getElementById("recipeServings").value = r.servings;
+    document.getElementById("recipeCalories").value = r.calories ?? "";
+    document.getElementById("recipeCarbs").value = r.carbs_g;
+    document.getElementById("recipeFat").value = r.fat_g;
+    document.getElementById("recipeProtein").value = r.protein_g;
+    document.getElementById("recipeNotes").value = r.notes || "";
+    r.ingredients.forEach(addIngredientRow);
+    renderRecipePhotoPreview(r.photo_path);
+  } else {
+    document.getElementById("recipeModalTitle").textContent = "Add recipe";
+    document.getElementById("recipeName").value = "";
+    document.getElementById("recipeServings").value = 4;
+    document.getElementById("recipeCalories").value = "";
+    document.getElementById("recipeCarbs").value = 0;
+    document.getElementById("recipeFat").value = 0;
+    document.getElementById("recipeProtein").value = 0;
+    document.getElementById("recipeNotes").value = "";
+    addIngredientRow({});
+    renderRecipePhotoPreview(null);
   }
+  openModal("recipeModal");
 }
 
-async function refreshSelectedPerson() {
-  if (!state.selectedId) return;
-  const person = await api.getPerson(state.selectedId);
-  state.selectedPerson = person;
-  showPersonDetail(person);
-  // Also refresh sidebar count
-  await loadPeople();
-  // Re-highlight selected card
-  els.peopleList.querySelectorAll('.person-card').forEach(c => {
-    c.classList.toggle('active', parseInt(c.dataset.id) === state.selectedId);
-  });
-}
-
-// ── Search ────────────────────────────────────────────────────────
-
-let searchDebounce = null;
-
-els.searchInput.addEventListener('input', () => {
-  const q = els.searchInput.value.trim();
-  els.clearSearch.hidden = !q;
-
-  clearTimeout(searchDebounce);
-  searchDebounce = setTimeout(async () => {
-    if (!q) {
-      state.searching = false;
-      await loadPeople();
-      return;
-    }
-    state.searching = true;
+async function handleRecipePhotoSelected(file) {
+  if (!file) return;
+  const id = document.getElementById("recipeId").value;
+  if (id) {
     try {
-      const results = await api.search(q);
-      renderPeopleList(results);
-      els.listLabel.textContent = `Results (${results.length})`;
+      const updated = await apiUpload(`/api/recipes/${id}/photo`, file);
+      await loadRecipes();
+      renderRecipePhotoPreview(updated.photo_path);
+      toast("Photo uploaded");
     } catch (e) {
-      showToast(e.message, 'error');
+      toast(e.message, true);
     }
-  }, 280);
-});
-
-els.clearSearch.addEventListener('click', () => {
-  els.searchInput.value = '';
-  els.clearSearch.hidden = true;
-  state.searching = false;
-  loadPeople();
-});
-
-// ── Add / Edit person modal ───────────────────────────────────────
-
-let editingPersonId = null;
-
-function openAddPersonModal() {
-  editingPersonId = null;
-  els.modalTitle.textContent = 'Add Person';
-  els.modalName.value = '';
-  els.modalRelationship.value = 'contact';
-  els.modalTags.value = '';
-  els.personModal.hidden = false;
-  els.modalName.focus();
-}
-
-function openEditPersonModal(person) {
-  editingPersonId = person.id;
-  els.modalTitle.textContent = 'Edit Person';
-  els.modalName.value = person.name;
-  els.modalRelationship.value = person.relationship;
-  els.modalTags.value = person.tags || '';
-  els.personModal.hidden = false;
-  els.modalName.focus();
-}
-
-function closePersonModal() {
-  els.personModal.hidden = true;
-}
-
-els.addPersonBtn.addEventListener('click', openAddPersonModal);
-els.emptyAddBtn.addEventListener('click', openAddPersonModal);
-els.closePersonModal.addEventListener('click', closePersonModal);
-els.cancelPersonModal.addEventListener('click', closePersonModal);
-
-els.personModal.addEventListener('click', e => {
-  if (e.target === els.personModal) closePersonModal();
-});
-
-els.savePersonBtn.addEventListener('click', async () => {
-  const name = els.modalName.value.trim();
-  if (!name) {
-    els.modalName.focus();
-    showToast('Name is required.', 'error');
-    return;
+  } else {
+    state.pendingRecipePhoto = file;
+    renderRecipePhotoPreview(URL.createObjectURL(file));
   }
-  const body = {
+}
+
+async function saveRecipe() {
+  const name = document.getElementById("recipeName").value.trim();
+  if (!name) { toast("Recipe needs a name", true); return; }
+
+  const ingredients = Array.from(document.querySelectorAll("#ingredientRows .ingredient-row"))
+    .map(row => ({
+      name: row.querySelector(".ing-name").value.trim(),
+      quantity: parseFloat(row.querySelector(".ing-qty").value) || 0,
+      unit: row.querySelector(".ing-unit").value.trim(),
+      category: row.querySelector(".ing-category").value,
+    }))
+    .filter(i => i.name);
+
+  const payload = {
     name,
-    relationship: els.modalRelationship.value,
-    tags: els.modalTags.value.trim(),
+    servings: parseInt(document.getElementById("recipeServings").value, 10) || 1,
+    calories: document.getElementById("recipeCalories").value === "" ? null : parseFloat(document.getElementById("recipeCalories").value),
+    carbs_g: parseFloat(document.getElementById("recipeCarbs").value) || 0,
+    fat_g: parseFloat(document.getElementById("recipeFat").value) || 0,
+    protein_g: parseFloat(document.getElementById("recipeProtein").value) || 0,
+    notes: document.getElementById("recipeNotes").value.trim(),
+    ingredients,
   };
+
+  const id = document.getElementById("recipeId").value;
   try {
-    if (editingPersonId) {
-      await api.updatePerson(editingPersonId, body);
-      showToast('Contact updated.');
-      closePersonModal();
-      await loadPeople();
-      if (state.selectedId === editingPersonId) {
-        await selectPerson(editingPersonId);
-      }
+    let saved;
+    if (id) {
+      saved = await api(`/api/recipes/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+      toast("Recipe updated");
     } else {
-      const newPerson = await api.createPerson(body);
-      showToast('Contact added.');
-      closePersonModal();
-      await loadPeople();
-      selectPerson(newPerson.id);
+      saved = await api("/api/recipes", { method: "POST", body: JSON.stringify(payload) });
+      toast("Recipe added");
     }
-  } catch (e) {
-    showToast(e.message, 'error');
-  }
-});
-
-// Enter key in name field saves
-els.modalName.addEventListener('keydown', e => {
-  if (e.key === 'Enter') els.savePersonBtn.click();
-});
-
-// ── Edit / Delete person ──────────────────────────────────────────
-
-els.editPersonBtn.addEventListener('click', () => {
-  if (state.selectedPerson) openEditPersonModal(state.selectedPerson);
-});
-
-els.deletePersonBtn.addEventListener('click', () => {
-  if (!state.selectedPerson) return;
-  confirmDelete(
-    'Delete Contact',
-    `Delete "${state.selectedPerson.name}" and all their notes? This cannot be undone.`,
-    async () => {
-      try {
-        await api.deletePerson(state.selectedId);
-        state.selectedId = null;
-        state.selectedPerson = null;
-        els.personDetail.hidden = true;
-        els.emptyState.hidden = false;
-        await loadPeople();
-        showToast('Contact deleted.');
-      } catch (e) {
-        showToast(e.message, 'error');
-      }
+    if (state.pendingRecipePhoto) {
+      await apiUpload(`/api/recipes/${saved.id}/photo`, state.pendingRecipePhoto);
+      state.pendingRecipePhoto = null;
     }
-  );
-});
-
-// ── Add note ──────────────────────────────────────────────────────
-
-els.submitNote.addEventListener('click', async () => {
-  const content = els.noteContent.value.trim();
-  if (!content) {
-    els.noteContent.focus();
-    return;
-  }
-  if (!state.selectedId) return;
-  try {
-    await api.addNote(state.selectedId, { content, note_type: els.noteType.value });
-    els.noteContent.value = '';
-    await refreshSelectedPerson();
-    // Scroll notes to bottom
-    els.notesList.scrollTop = els.notesList.scrollHeight;
-    showToast('Note saved.');
+    closeModal("recipeModal");
+    await loadRecipes();
   } catch (e) {
-    showToast(e.message, 'error');
+    toast(e.message, true);
   }
-});
-
-// ── Confirm modal ─────────────────────────────────────────────────
-
-let confirmCallback = null;
-
-function confirmDelete(title, message, onConfirm) {
-  els.confirmTitle.textContent = title;
-  els.confirmMessage.textContent = message;
-  confirmCallback = onConfirm;
-  els.confirmModal.hidden = false;
 }
 
-els.confirmCancel.addEventListener('click', () => {
-  els.confirmModal.hidden = true;
-  confirmCallback = null;
-});
-
-els.confirmOk.addEventListener('click', async () => {
-  els.confirmModal.hidden = true;
-  if (confirmCallback) {
-    await confirmCallback();
-    confirmCallback = null;
+async function deleteRecipe(id) {
+  if (!confirm("Delete this recipe?")) return;
+  try {
+    await api(`/api/recipes/${id}`, { method: "DELETE" });
+    delete state.planSelections[id];
+    toast("Recipe deleted");
+    await loadRecipes();
+  } catch (e) {
+    toast(e.message, true);
   }
-});
+}
 
-els.confirmModal.addEventListener('click', e => {
-  if (e.target === els.confirmModal) {
-    els.confirmModal.hidden = true;
-    confirmCallback = null;
+// ── Macro / calorie plan ─────────────────────────────────────────────────
+
+async function loadMacroPlan() {
+  state.macroPlan = await api("/api/macro-plan");
+  renderMacroPlan();
+}
+
+function renderMacroPlan() {
+  const mp = state.macroPlan;
+  if (!mp) return;
+
+  document.getElementById("macroCalories").value = mp.target_calories ?? "";
+  document.getElementById("macroCarbs").value = mp.target_carbs_g ?? 0;
+  document.getElementById("macroFat").value = mp.target_fat_g ?? 0;
+  document.getElementById("macroProtein").value = mp.target_protein_g ?? 0;
+  document.getElementById("macroNotes").value = mp.notes || "";
+
+  const m = mp.macros;
+  const summary = document.getElementById("macroSummary");
+  if (m.calories > 0) {
+    summary.innerHTML = `
+      <span class="macro-chip">${m.calories} kcal target</span>
+      <span class="macro-chip macro-carb">Carbs ${m.carb_pct}%</span>
+      <span class="macro-chip macro-fat">Fat ${m.fat_pct}%</span>
+      <span class="macro-chip macro-protein">Protein ${m.protein_pct}%</span>
+      ${m.is_high_carb_low_fat ? '<span class="badge badge-hclf">HCLF</span>' : ""}
+    `;
+  } else {
+    summary.innerHTML = "";
   }
-});
 
-// ── Voice dictation ───────────────────────────────────────────────
+  const fileContainer = document.getElementById("macroFilePreview");
+  document.getElementById("macroFileInput").value = "";
+  if (mp.file_path) {
+    const isPdf = mp.file_path.toLowerCase().endsWith(".pdf");
+    fileContainer.innerHTML = `
+      <div class="photo-preview-wrap">
+        ${isPdf
+          ? `<a href="${mp.file_path}" target="_blank" rel="noopener" class="pdf-link">📄 ${escapeHtml(mp.file_name || "plan.pdf")}</a>`
+          : `<img src="${mp.file_path}" alt="Macro plan" class="photo-preview">`}
+        <button type="button" class="btn btn-small btn-danger" id="btnRemoveMacroFile">Remove file</button>
+      </div>
+    `;
+    document.getElementById("btnRemoveMacroFile").addEventListener("click", async () => {
+      try {
+        state.macroPlan = await api("/api/macro-plan/file", { method: "DELETE" });
+        renderMacroPlan();
+        toast("File removed");
+      } catch (e) {
+        toast(e.message, true);
+      }
+    });
+  } else {
+    fileContainer.innerHTML = `<p class="muted small">No file uploaded yet.</p>`;
+  }
+}
 
-(function setupVoice() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+async function saveMacroPlanTargets() {
+  const payload = {
+    target_calories: document.getElementById("macroCalories").value === "" ? null : parseFloat(document.getElementById("macroCalories").value),
+    target_carbs_g: parseFloat(document.getElementById("macroCarbs").value) || 0,
+    target_fat_g: parseFloat(document.getElementById("macroFat").value) || 0,
+    target_protein_g: parseFloat(document.getElementById("macroProtein").value) || 0,
+    notes: document.getElementById("macroNotes").value.trim(),
+  };
+  try {
+    state.macroPlan = await api("/api/macro-plan", { method: "PUT", body: JSON.stringify(payload) });
+    renderMacroPlan();
+    updateScaleMacroHint();
+    renderPlanEntries();
+    toast("Targets saved");
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
 
-  if (!SpeechRecognition) {
-    els.micBtn.title = 'Voice dictation not supported in this browser';
-    els.micBtn.style.opacity = '0.4';
-    els.micBtn.style.cursor = 'not-allowed';
+async function handleMacroFileSelected(file) {
+  if (!file) return;
+  try {
+    state.macroPlan = await apiUpload("/api/macro-plan/file", file);
+    renderMacroPlan();
+    toast("File uploaded");
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+// ── Staples ───────────────────────────────────────────────────────────────
+
+async function loadStaples() {
+  state.staples = await api("/api/staples");
+  renderStaples();
+}
+
+function renderStaples() {
+  const container = document.getElementById("stapleList");
+  if (state.staples.length === 0) {
+    container.innerHTML = `<p class="empty-state">No regular items yet — add the things you always need.</p>`;
+    return;
+  }
+  container.innerHTML = state.staples.map(s => `
+    <div class="staple-row">
+      <div>
+        <strong>${escapeHtml(s.name)}</strong>
+        <span class="muted small">${s.quantity} ${escapeHtml(s.unit || "")} · ${escapeHtml(s.category)}</span>
+      </div>
+      <div class="card-actions">
+        <button class="btn btn-small" data-edit-staple="${s.id}">Edit</button>
+        <button class="btn btn-small btn-danger" data-delete-staple="${s.id}">Delete</button>
+      </div>
+    </div>
+  `).join("");
+
+  container.querySelectorAll("[data-edit-staple]").forEach(btn => {
+    btn.addEventListener("click", () => openStapleModal(Number(btn.dataset.editStaple)));
+  });
+  container.querySelectorAll("[data-delete-staple]").forEach(btn => {
+    btn.addEventListener("click", () => deleteStaple(Number(btn.dataset.deleteStaple)));
+  });
+}
+
+function populateCategorySelect() {
+  document.getElementById("stapleCategory").innerHTML = CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join("");
+}
+
+function openStapleModal(stapleId = null) {
+  document.getElementById("stapleId").value = stapleId || "";
+  if (stapleId) {
+    const s = state.staples.find(x => x.id === stapleId);
+    document.getElementById("stapleModalTitle").textContent = "Edit item";
+    document.getElementById("stapleName").value = s.name;
+    document.getElementById("stapleQuantity").value = s.quantity;
+    document.getElementById("stapleUnit").value = s.unit || "";
+    document.getElementById("stapleCategory").value = s.category;
+  } else {
+    document.getElementById("stapleModalTitle").textContent = "Add regular item";
+    document.getElementById("stapleName").value = "";
+    document.getElementById("stapleQuantity").value = 1;
+    document.getElementById("stapleUnit").value = "";
+    document.getElementById("stapleCategory").value = "Other";
+  }
+  openModal("stapleModal");
+}
+
+async function saveStaple() {
+  const name = document.getElementById("stapleName").value.trim();
+  if (!name) { toast("Item needs a name", true); return; }
+  const payload = {
+    name,
+    quantity: parseFloat(document.getElementById("stapleQuantity").value) || 0,
+    unit: document.getElementById("stapleUnit").value.trim(),
+    category: document.getElementById("stapleCategory").value,
+  };
+  const id = document.getElementById("stapleId").value;
+  try {
+    if (id) {
+      await api(`/api/staples/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+      toast("Item updated");
+    } else {
+      await api("/api/staples", { method: "POST", body: JSON.stringify(payload) });
+      toast("Item added");
+    }
+    closeModal("stapleModal");
+    await loadStaples();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function deleteStaple(id) {
+  if (!confirm("Remove this regular item?")) return;
+  try {
+    await api(`/api/staples/${id}`, { method: "DELETE" });
+    toast("Item removed");
+    await loadStaples();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+// ── Plan builder ──────────────────────────────────────────────────────────
+
+function toggleHclfThresholds() {
+  const on = document.getElementById("planHclf").checked;
+  document.getElementById("hclfThresholds").style.display = on ? "grid" : "none";
+}
+
+const METRIC_LABELS = { calories: "calories", carbs: "carbs", fat: "fat", protein: "protein" };
+
+function currentScaleMetric() {
+  return document.getElementById("planScaleMetric").value;
+}
+
+function metricTargetAndRecipeValue(metric, recipe) {
+  const mp = state.macroPlan;
+  if (!mp) return [null, null];
+  if (metric === "carbs") return [mp.target_carbs_g, recipe.carbs_g];
+  if (metric === "fat") return [mp.target_fat_g, recipe.fat_g];
+  if (metric === "protein") return [mp.target_protein_g, recipe.protein_g];
+  return [mp.target_calories, recipe.macros.calories];
+}
+
+function computePortionFactor(recipe, metric) {
+  const [targetVal, recipeVal] = metricTargetAndRecipeValue(metric, recipe);
+  if (!targetVal || !recipeVal || recipeVal <= 0) return 1;
+  return Math.round((targetVal / recipeVal) * 1000) / 1000;
+}
+
+function toggleScaleMetricRow() {
+  const on = document.getElementById("planScaleToMacros").checked;
+  document.getElementById("scaleMetricRow").style.display = on ? "grid" : "none";
+  renderPlanEntries();
+}
+
+function updateScaleMacroHint() {
+  const metric = currentScaleMetric();
+  const mp = state.macroPlan;
+  const [targetVal] = metricTargetAndRecipeValue(metric, { carbs_g: 0, fat_g: 0, protein_g: 0, macros: { calories: 0 } });
+  const hint = document.getElementById("scaleMacroHint");
+  const checkbox = document.getElementById("planScaleToMacros");
+  if (!mp || !targetVal) {
+    hint.textContent = `No ${METRIC_LABELS[metric]} target set yet — set one on the Macro Plan tab first.`;
+    checkbox.disabled = true;
+    checkbox.checked = false;
+    document.getElementById("scaleMetricRow").style.display = "none";
+  } else {
+    hint.textContent = `Portions will be scaled so each person's serving hits ${targetVal} ${metric === "calories" ? "kcal" : "g"} of ${METRIC_LABELS[metric]}.`;
+    checkbox.disabled = false;
+  }
+}
+
+async function suggestRecipes() {
+  const hclf = document.getElementById("planHclf").checked;
+  const params = new URLSearchParams();
+  if (hclf) {
+    params.set("max_fat_pct", document.getElementById("maxFatPct").value || 20);
+    params.set("min_carb_pct", document.getElementById("minCarbPct").value || 55);
+  }
+  try {
+    state.suggestions = await api(`/api/recipes/suggest?${params.toString()}`);
+    renderSuggestions();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function renderSuggestions() {
+  const container = document.getElementById("suggestList");
+  if (state.suggestions.length === 0) {
+    container.innerHTML = `<p class="empty-state">No recipes match — add more recipes or relax the filter.</p>`;
+    return;
+  }
+  container.innerHTML = state.suggestions.map(r => `
+    <div class="suggest-row">
+      <label class="checkbox-label suggest-check">
+        <input type="checkbox" class="suggest-select" data-id="${r.id}" ${state.planSelections[r.id] ? "checked" : ""}>
+        <span>${escapeHtml(r.name)}</span>
+        ${r.macros.is_high_carb_low_fat ? '<span class="badge badge-hclf">HCLF</span>' : ""}
+        <span class="muted small">C ${r.macros.carb_pct}% / F ${r.macros.fat_pct}% / P ${r.macros.protein_pct}%</span>
+      </label>
+      <label class="nights-input">
+        nights
+        <input type="number" class="suggest-nights" data-id="${r.id}" min="1" value="${state.planSelections[r.id] || 1}" ${state.planSelections[r.id] ? "" : "disabled"}>
+      </label>
+    </div>
+  `).join("");
+
+  container.querySelectorAll(".suggest-select").forEach(cb => {
+    cb.addEventListener("change", () => {
+      const id = Number(cb.dataset.id);
+      const nightsInput = container.querySelector(`.suggest-nights[data-id="${id}"]`);
+      if (cb.checked) {
+        state.planSelections[id] = parseInt(nightsInput.value, 10) || 1;
+        nightsInput.disabled = false;
+      } else {
+        delete state.planSelections[id];
+        nightsInput.disabled = true;
+      }
+      renderPlanEntries();
+    });
+  });
+  container.querySelectorAll(".suggest-nights").forEach(inp => {
+    inp.addEventListener("input", () => {
+      const id = Number(inp.dataset.id);
+      if (state.planSelections[id] !== undefined) {
+        state.planSelections[id] = parseInt(inp.value, 10) || 1;
+        renderPlanEntries();
+      }
+    });
+  });
+}
+
+function renderPlanEntries() {
+  const container = document.getElementById("planEntries");
+  const ids = Object.keys(state.planSelections);
+  const days = parseInt(document.getElementById("planDays").value, 10) || 0;
+  const scaling = document.getElementById("planScaleToMacros").checked;
+  const metric = currentScaleMetric();
+
+  if (ids.length === 0) {
+    container.innerHTML = `<p class="empty-state">No meals selected yet.</p>`;
+  } else {
+    container.innerHTML = ids.map(id => {
+      const recipe = state.recipes.find(r => r.id === Number(id)) || state.suggestions.find(r => r.id === Number(id));
+      const nights = state.planSelections[id];
+      const factor = scaling && recipe ? computePortionFactor(recipe, metric) : 1;
+      return `<div class="plan-entry-row">
+        <span>${recipe ? escapeHtml(recipe.name) : `Recipe #${id}`}</span>
+        <span class="muted small">${nights} night${nights === 1 ? "" : "s"}${factor !== 1 ? ` · ${factor}× serving` : ""}</span>
+      </div>`;
+    }).join("");
+  }
+
+  const covered = Object.values(state.planSelections).reduce((a, b) => a + b, 0);
+  const progressEl = document.getElementById("nightsProgress");
+  progressEl.textContent = `${covered} / ${days} nights covered`;
+  progressEl.classList.toggle("progress-ok", covered >= days && days > 0);
+}
+
+async function generatePlan() {
+  const days = parseInt(document.getElementById("planDays").value, 10);
+  const people = parseInt(document.getElementById("planPeople").value, 10);
+  const label = document.getElementById("planLabel").value.trim();
+  const scale_to_macros = document.getElementById("planScaleToMacros").checked;
+  const scale_metric = currentScaleMetric();
+  const entries = Object.entries(state.planSelections).map(([recipe_id, nights]) => ({
+    recipe_id: Number(recipe_id), nights,
+  }));
+
+  if (entries.length === 0) { toast("Select at least one recipe first", true); return; }
+  if (!days || !people) { toast("Set days and people", true); return; }
+
+  try {
+    const plan = await api("/api/plans", {
+      method: "POST",
+      body: JSON.stringify({ days, people, label, entries, scale_to_macros, scale_metric }),
+    });
+    toast("Plan created");
+    state.planSelections = {};
+    document.getElementById("planLabel").value = "";
+    renderSuggestions();
+    renderPlanEntries();
+    await loadShoppingList(plan.id);
+    await loadPlanHistory();
+    switchTab("shopping");
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+// ── Shopping list ─────────────────────────────────────────────────────────
+
+async function loadShoppingList(planId) {
+  try {
+    const result = await api(`/api/plans/${planId}/shopping-list`);
+    state.currentShoppingList = result;
+    state.checkedItems = loadCheckedState(planId);
+    renderShoppingList();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function checkedStorageKey(planId) { return `mealplanner_checked_${planId}`; }
+function loadCheckedState(planId) {
+  try { return JSON.parse(localStorage.getItem(checkedStorageKey(planId))) || {}; }
+  catch (_) { return {}; }
+}
+function saveCheckedState(planId) {
+  localStorage.setItem(checkedStorageKey(planId), JSON.stringify(state.checkedItems));
+}
+
+function renderShoppingList() {
+  const meta = document.getElementById("shoppingMeta");
+  const container = document.getElementById("shoppingItems");
+  const data = state.currentShoppingList;
+
+  if (!data) {
+    meta.textContent = "";
+    container.innerHTML = `<p class="empty-state">Generate a plan to see your shopping list here.</p>`;
     return;
   }
 
-  const recognition = new SpeechRecognition();
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  recognition.lang = 'en-US';
+  const plan = data.plan;
+  meta.textContent = `${plan.label ? plan.label + " · " : ""}${plan.days} days · ${plan.people} people · ${plan.nights_covered} night${plan.nights_covered === 1 ? "" : "s"} covered`;
 
-  let isRecording = false;
-  let baseText = ''; // text before current recognition session
-  let interimText = '';
-
-  function startRecording() {
-    baseText = els.noteContent.value;
-    if (baseText && !baseText.endsWith(' ') && !baseText.endsWith('\n')) {
-      baseText += ' ';
-    }
-    isRecording = true;
-    els.micBtn.classList.add('recording');
-    els.micBtn.title = 'Stop voice dictation';
-    try {
-      recognition.start();
-    } catch (e) {
-      // Already started
-    }
+  const scalingContainer = document.getElementById("shoppingScaling");
+  if (plan.scale_to_macros && plan.entries.some(e => e.portion_factor && e.portion_factor !== 1)) {
+    scalingContainer.innerHTML = `
+      <div class="scaling-note">
+        <strong>Portions scaled to hit your ${METRIC_LABELS[plan.scale_metric] || plan.scale_metric} target:</strong>
+        ${plan.entries.map(e => `<span class="macro-chip">${escapeHtml(e.recipe_name)}: ${e.portion_factor}× serving</span>`).join(" ")}
+      </div>`;
+  } else {
+    scalingContainer.innerHTML = "";
   }
 
-  function stopRecording() {
-    isRecording = false;
-    els.micBtn.classList.remove('recording');
-    els.micBtn.title = 'Start voice dictation';
-    recognition.stop();
-    // Commit any remaining interim text
-    if (interimText) {
-      els.noteContent.value = baseText + interimText;
-      interimText = '';
-    }
-  }
-
-  recognition.onresult = (event) => {
-    let finalText = '';
-    interimText = '';
-
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) {
-        finalText += event.results[i][0].transcript;
-      } else {
-        interimText += event.results[i][0].transcript;
-      }
-    }
-
-    if (finalText) {
-      baseText += finalText;
-      if (!baseText.endsWith(' ') && !baseText.endsWith('\n')) {
-        baseText += ' ';
-      }
-      interimText = '';
-    }
-
-    els.noteContent.value = baseText + interimText;
-  };
-
-  recognition.onerror = (event) => {
-    if (event.error !== 'aborted') {
-      showToast(`Voice error: ${event.error}`, 'error');
-    }
-    stopRecording();
-  };
-
-  recognition.onend = () => {
-    if (isRecording) {
-      // Restart if we didn't intentionally stop
-      try { recognition.start(); } catch (e) { stopRecording(); }
-    }
-  };
-
-  els.micBtn.addEventListener('click', () => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
+  const grouped = {};
+  data.items.forEach(item => {
+    grouped[item.category] = grouped[item.category] || [];
+    grouped[item.category].push(item);
   });
-})();
 
-// ── Keyboard shortcuts ────────────────────────────────────────────
+  container.innerHTML = CATEGORIES.filter(c => grouped[c]).map(cat => `
+    <div class="shopping-category">
+      <h4>${cat}</h4>
+      ${grouped[cat].map(item => {
+        const key = `${item.name}|${item.unit}`;
+        const checked = !!state.checkedItems[key];
+        return `
+        <div class="shopping-item ${checked ? "checked" : ""}">
+          <label class="checkbox-label">
+            <input type="checkbox" class="shopping-check" data-key="${escapeAttr(key)}" ${checked ? "checked" : ""}>
+            <span>${escapeHtml(item.name)}${item.quantity ? ` — ${item.quantity} ${escapeHtml(item.unit || "")}` : ""}</span>
+          </label>
+          ${item.source === "staple" ? '<span class="badge badge-staple">regular</span>' : ""}
+          <a class="tesco-link" href="${item.tesco_search_url}" target="_blank" rel="noopener">Search on Tesco ↗</a>
+        </div>`;
+      }).join("")}
+    </div>
+  `).join("");
 
-document.addEventListener('keydown', e => {
-  // Escape closes modals
-  if (e.key === 'Escape') {
-    if (!els.personModal.hidden) closePersonModal();
-    if (!els.confirmModal.hidden) {
-      els.confirmModal.hidden = true;
-      confirmCallback = null;
-    }
+  container.querySelectorAll(".shopping-check").forEach(cb => {
+    cb.addEventListener("change", () => {
+      state.checkedItems[cb.dataset.key] = cb.checked;
+      cb.closest(".shopping-item").classList.toggle("checked", cb.checked);
+      saveCheckedState(data.plan.id);
+    });
+  });
+}
+
+function copyShoppingList() {
+  const data = state.currentShoppingList;
+  if (!data) { toast("Nothing to copy yet", true); return; }
+  const lines = [`Shopping list${data.plan.label ? " — " + data.plan.label : ""}`, ""];
+  const grouped = {};
+  data.items.forEach(item => {
+    grouped[item.category] = grouped[item.category] || [];
+    grouped[item.category].push(item);
+  });
+  CATEGORIES.filter(c => grouped[c]).forEach(cat => {
+    lines.push(cat.toUpperCase());
+    grouped[cat].forEach(item => {
+      lines.push(`- ${item.name}${item.quantity ? ` (${item.quantity} ${item.unit || ""})` : ""}`);
+    });
+    lines.push("");
+  });
+  const text = lines.join("\n");
+  navigator.clipboard.writeText(text).then(
+    () => toast("Shopping list copied"),
+    () => toast("Couldn't copy — select and copy manually", true)
+  );
+}
+
+async function loadPlanHistory() {
+  const plans = await api("/api/plans");
+  const container = document.getElementById("planHistory");
+  if (plans.length === 0) {
+    container.innerHTML = `<p class="empty-state">No plans yet.</p>`;
+    return;
   }
-});
+  container.innerHTML = plans.map(p => `
+    <div class="history-row">
+      <div>
+        <strong>${escapeHtml(p.label || `Plan #${p.id}`)}</strong>
+        <span class="muted small">${p.days} days · ${p.people} people · ${new Date(p.created_at).toLocaleDateString()}</span>
+      </div>
+      <div class="card-actions">
+        <button class="btn btn-small" data-view-plan="${p.id}">View</button>
+        <button class="btn btn-small btn-danger" data-delete-plan="${p.id}">Delete</button>
+      </div>
+    </div>
+  `).join("");
 
-// ── Init ──────────────────────────────────────────────────────────
+  container.querySelectorAll("[data-view-plan]").forEach(btn => {
+    btn.addEventListener("click", () => loadShoppingList(Number(btn.dataset.viewPlan)));
+  });
+  container.querySelectorAll("[data-delete-plan]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Delete this plan?")) return;
+      await api(`/api/plans/${btn.dataset.deletePlan}`, { method: "DELETE" });
+      toast("Plan deleted");
+      await loadPlanHistory();
+    });
+  });
+}
 
-loadPeople();
+// ── Utilities ─────────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str ?? "";
+  return div.innerHTML;
+}
+function escapeAttr(str) {
+  return escapeHtml(str).replace(/"/g, "&quot;");
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+
+async function init() {
+  initTabs();
+  initModals();
+  populateCategorySelect();
+
+  document.getElementById("btnAddRecipe").addEventListener("click", () => openRecipeModal());
+  document.getElementById("btnSaveRecipe").addEventListener("click", saveRecipe);
+  document.getElementById("btnAddIngredientRow").addEventListener("click", () => addIngredientRow({}));
+  document.getElementById("recipePhotoInput").addEventListener("change", e => handleRecipePhotoSelected(e.target.files[0]));
+
+  document.getElementById("btnSaveMacroPlan").addEventListener("click", saveMacroPlanTargets);
+  document.getElementById("macroFileInput").addEventListener("change", e => handleMacroFileSelected(e.target.files[0]));
+
+  document.getElementById("btnAddStaple").addEventListener("click", () => openStapleModal());
+  document.getElementById("btnSaveStaple").addEventListener("click", saveStaple);
+
+  document.getElementById("planHclf").addEventListener("change", toggleHclfThresholds);
+  document.getElementById("planDays").addEventListener("input", renderPlanEntries);
+  document.getElementById("btnSuggest").addEventListener("click", suggestRecipes);
+  document.getElementById("btnGeneratePlan").addEventListener("click", generatePlan);
+
+  document.getElementById("planScaleToMacros").addEventListener("change", toggleScaleMetricRow);
+  document.getElementById("planScaleMetric").addEventListener("change", () => {
+    updateScaleMacroHint();
+    renderPlanEntries();
+  });
+
+  document.getElementById("btnCopyList").addEventListener("click", copyShoppingList);
+  document.getElementById("btnOpenTesco").addEventListener("click", () => {
+    window.open("https://www.tesco.com/groceries/en-GB/", "_blank", "noopener");
+  });
+
+  toggleHclfThresholds();
+  await Promise.all([loadRecipes(), loadStaples(), loadPlanHistory(), loadMacroPlan()]);
+  updateScaleMacroHint();
+  renderPlanEntries();
+}
+
+document.addEventListener("DOMContentLoaded", init);
