@@ -31,6 +31,7 @@ def init_db():
                 fat_g REAL NOT NULL DEFAULT 0,
                 protein_g REAL NOT NULL DEFAULT 0,
                 notes TEXT DEFAULT '',
+                photo_path TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -72,9 +73,33 @@ def init_db():
                 FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS macro_plan (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                target_calories REAL,
+                target_carbs_g REAL,
+                target_fat_g REAL,
+                target_protein_g REAL,
+                notes TEXT DEFAULT '',
+                file_path TEXT,
+                file_name TEXT,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_ingredients_recipe ON ingredients(recipe_id);
             CREATE INDEX IF NOT EXISTS idx_plan_entries_plan ON plan_entries(plan_id);
         """)
+        conn.commit()
+
+        # Migration: add photo_path to recipes created before this column existed.
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(recipes)").fetchall()]
+        if "photo_path" not in cols:
+            conn.execute("ALTER TABLE recipes ADD COLUMN photo_path TEXT")
+            conn.commit()
+
+        conn.execute(
+            "INSERT OR IGNORE INTO macro_plan (id, notes, updated_at) VALUES (1, '', ?)",
+            (datetime.utcnow().isoformat(),),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -182,6 +207,20 @@ def update_recipe(recipe_id, name, servings, calories, carbs_g, fat_g, protein_g
         conn.commit()
     finally:
         conn.close()
+
+
+def set_recipe_photo(recipe_id: int, photo_path: str):
+    now = datetime.utcnow().isoformat()
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE recipes SET photo_path=?, updated_at=? WHERE id=?", (photo_path, now, recipe_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def clear_recipe_photo(recipe_id: int):
+    set_recipe_photo(recipe_id, None)
 
 
 def delete_recipe(recipe_id: int) -> bool:
@@ -368,3 +407,52 @@ def build_shopping_list(plan_id: int):
         return {"plan": plan, "items": items}
     finally:
         conn.close()
+
+
+# ── Macro / calorie plan (singleton) ─────────────────────────────────────────
+
+def get_macro_plan():
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM macro_plan WHERE id=1").fetchone()
+        macro_plan = dict(row)
+        macro_plan["macros"] = compute_macros(
+            macro_plan["target_calories"], macro_plan["target_carbs_g"],
+            macro_plan["target_fat_g"], macro_plan["target_protein_g"],
+        )
+        return macro_plan
+    finally:
+        conn.close()
+
+
+def update_macro_plan(target_calories, target_carbs_g, target_fat_g, target_protein_g, notes):
+    now = datetime.utcnow().isoformat()
+    conn = get_connection()
+    try:
+        conn.execute(
+            """UPDATE macro_plan SET target_calories=?, target_carbs_g=?, target_fat_g=?,
+               target_protein_g=?, notes=?, updated_at=? WHERE id=1""",
+            (target_calories, target_carbs_g, target_fat_g, target_protein_g, notes, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_macro_plan()
+
+
+def set_macro_plan_file(file_path, file_name):
+    now = datetime.utcnow().isoformat()
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE macro_plan SET file_path=?, file_name=?, updated_at=? WHERE id=1",
+            (file_path, file_name, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_macro_plan()
+
+
+def clear_macro_plan_file():
+    return set_macro_plan_file(None, None)

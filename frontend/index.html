@@ -16,6 +16,7 @@
   <nav class="tabs">
     <button class="tab-btn active" data-tab="plan">Plan Builder</button>
     <button class="tab-btn" data-tab="recipes">Recipes</button>
+    <button class="tab-btn" data-tab="macros">Macro Plan</button>
     <button class="tab-btn" data-tab="staples">Regular Items</button>
     <button class="tab-btn" data-tab="shopping">Shopping List</button>
   </nav>
@@ -80,6 +81,40 @@
       <button class="btn btn-primary" id="btnAddRecipe">+ Add recipe</button>
     </div>
     <div id="recipeList" class="card-grid"></div>
+  </section>
+
+  <!-- ── MACRO / CALORIE PLAN ────────────────────────────────────────── -->
+  <section id="tab-macros" class="tab-panel">
+    <div class="panel-card">
+      <h2>Daily targets</h2>
+      <p class="muted small">Set the calorie/macro targets you're working towards — used as a reference alongside each recipe's per-serving breakdown.</p>
+      <div class="form-grid form-grid-4">
+        <label>Calories (optional)
+          <input type="number" id="macroCalories" min="0">
+        </label>
+        <label>Carbs (g)
+          <input type="number" id="macroCarbs" min="0" value="0">
+        </label>
+        <label>Fat (g)
+          <input type="number" id="macroFat" min="0" value="0">
+        </label>
+        <label>Protein (g)
+          <input type="number" id="macroProtein" min="0" value="0">
+        </label>
+      </div>
+      <div class="macro-bar" id="macroSummary"></div>
+      <label>Notes (optional)
+        <textarea id="macroNotes" rows="2" placeholder="e.g. from coach, marathon training block..."></textarea>
+      </label>
+      <button class="btn btn-primary" id="btnSaveMacroPlan">Save targets</button>
+    </div>
+
+    <div class="panel-card">
+      <h2>Uploaded plan</h2>
+      <p class="muted small">Upload a photo or PDF of your macro/calorie plan (e.g. from a nutritionist or app) to keep it alongside your targets.</p>
+      <div id="macroFilePreview"></div>
+      <input type="file" id="macroFileInput" accept="image/*,.pdf" class="file-input">
+    </div>
   </section>
 
   <!-- ── STAPLES ──────────────────────────────────────────────────── -->
@@ -159,6 +194,10 @@
       <label>Notes / method (optional)
         <textarea id="recipeNotes" rows="2" placeholder="Cooking notes..."></textarea>
       </label>
+
+      <h4>Photo</h4>
+      <div id="recipePhotoPreview"></div>
+      <input type="file" id="recipePhotoInput" accept="image/*" class="file-input">
 
       <div class="ingredients-header">
         <h4>Ingredients</h4>

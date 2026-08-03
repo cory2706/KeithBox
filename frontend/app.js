@@ -11,6 +11,8 @@ const state = {
   planSelections: {},      // recipe_id -> nights
   currentShoppingList: null,
   checkedItems: {},        // persisted per-plan checked state
+  macroPlan: null,
+  pendingRecipePhoto: null, // File object staged for a not-yet-created recipe
 };
 
 // ── API helper ────────────────────────────────────────────────────────────
@@ -26,6 +28,18 @@ async function api(path, options = {}) {
     throw new Error(detail);
   }
   if (res.status === 204) return null;
+  return res.json();
+}
+
+async function apiUpload(path, file, method = "POST") {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(path, { method, body: formData });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch (_) {}
+    throw new Error(detail);
+  }
   return res.json();
 }
 
@@ -98,6 +112,7 @@ function renderRecipes() {
   }
   container.innerHTML = state.recipes.map(r => `
     <div class="recipe-card">
+      ${r.photo_path ? `<img class="recipe-photo" src="${r.photo_path}" alt="${escapeAttr(r.name)}">` : ""}
       <div class="recipe-card-header">
         <h3>${escapeHtml(r.name)}</h3>
         ${r.macros.is_high_carb_low_fat ? '<span class="badge badge-hclf">HCLF</span>' : ""}
@@ -146,9 +161,44 @@ function addIngredientRow(ing) {
   wrap.appendChild(row);
 }
 
+function renderRecipePhotoPreview(photoUrl) {
+  const container = document.getElementById("recipePhotoPreview");
+  document.getElementById("recipePhotoInput").value = "";
+  if (!photoUrl) {
+    container.innerHTML = `<p class="muted small">No photo yet.</p>`;
+    return;
+  }
+  container.innerHTML = `
+    <div class="photo-preview-wrap">
+      <img src="${photoUrl}" alt="Recipe photo" class="photo-preview">
+      <button type="button" class="btn btn-small btn-danger" id="btnRemoveRecipePhoto">Remove photo</button>
+    </div>
+  `;
+  const removeBtn = document.getElementById("btnRemoveRecipePhoto");
+  if (removeBtn) {
+    removeBtn.addEventListener("click", async () => {
+      const id = document.getElementById("recipeId").value;
+      if (id) {
+        try {
+          await api(`/api/recipes/${id}/photo`, { method: "DELETE" });
+          await loadRecipes();
+          renderRecipePhotoPreview(null);
+          toast("Photo removed");
+        } catch (e) {
+          toast(e.message, true);
+        }
+      } else {
+        state.pendingRecipePhoto = null;
+        renderRecipePhotoPreview(null);
+      }
+    });
+  }
+}
+
 function openRecipeModal(recipeId = null) {
   document.getElementById("recipeId").value = recipeId || "";
   document.getElementById("ingredientRows").innerHTML = "";
+  state.pendingRecipePhoto = null;
 
   if (recipeId) {
     const r = state.recipes.find(x => x.id === recipeId);
@@ -161,6 +211,7 @@ function openRecipeModal(recipeId = null) {
     document.getElementById("recipeProtein").value = r.protein_g;
     document.getElementById("recipeNotes").value = r.notes || "";
     r.ingredients.forEach(addIngredientRow);
+    renderRecipePhotoPreview(r.photo_path);
   } else {
     document.getElementById("recipeModalTitle").textContent = "Add recipe";
     document.getElementById("recipeName").value = "";
@@ -171,8 +222,27 @@ function openRecipeModal(recipeId = null) {
     document.getElementById("recipeProtein").value = 0;
     document.getElementById("recipeNotes").value = "";
     addIngredientRow({});
+    renderRecipePhotoPreview(null);
   }
   openModal("recipeModal");
+}
+
+async function handleRecipePhotoSelected(file) {
+  if (!file) return;
+  const id = document.getElementById("recipeId").value;
+  if (id) {
+    try {
+      const updated = await apiUpload(`/api/recipes/${id}/photo`, file);
+      await loadRecipes();
+      renderRecipePhotoPreview(updated.photo_path);
+      toast("Photo uploaded");
+    } catch (e) {
+      toast(e.message, true);
+    }
+  } else {
+    state.pendingRecipePhoto = file;
+    renderRecipePhotoPreview(URL.createObjectURL(file));
+  }
 }
 
 async function saveRecipe() {
@@ -201,12 +271,17 @@ async function saveRecipe() {
 
   const id = document.getElementById("recipeId").value;
   try {
+    let saved;
     if (id) {
-      await api(`/api/recipes/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+      saved = await api(`/api/recipes/${id}`, { method: "PUT", body: JSON.stringify(payload) });
       toast("Recipe updated");
     } else {
-      await api("/api/recipes", { method: "POST", body: JSON.stringify(payload) });
+      saved = await api("/api/recipes", { method: "POST", body: JSON.stringify(payload) });
       toast("Recipe added");
+    }
+    if (state.pendingRecipePhoto) {
+      await apiUpload(`/api/recipes/${saved.id}/photo`, state.pendingRecipePhoto);
+      state.pendingRecipePhoto = null;
     }
     closeModal("recipeModal");
     await loadRecipes();
@@ -222,6 +297,91 @@ async function deleteRecipe(id) {
     delete state.planSelections[id];
     toast("Recipe deleted");
     await loadRecipes();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+// ── Macro / calorie plan ─────────────────────────────────────────────────
+
+async function loadMacroPlan() {
+  state.macroPlan = await api("/api/macro-plan");
+  renderMacroPlan();
+}
+
+function renderMacroPlan() {
+  const mp = state.macroPlan;
+  if (!mp) return;
+
+  document.getElementById("macroCalories").value = mp.target_calories ?? "";
+  document.getElementById("macroCarbs").value = mp.target_carbs_g ?? 0;
+  document.getElementById("macroFat").value = mp.target_fat_g ?? 0;
+  document.getElementById("macroProtein").value = mp.target_protein_g ?? 0;
+  document.getElementById("macroNotes").value = mp.notes || "";
+
+  const m = mp.macros;
+  const summary = document.getElementById("macroSummary");
+  if (m.calories > 0) {
+    summary.innerHTML = `
+      <span class="macro-chip">${m.calories} kcal target</span>
+      <span class="macro-chip macro-carb">Carbs ${m.carb_pct}%</span>
+      <span class="macro-chip macro-fat">Fat ${m.fat_pct}%</span>
+      <span class="macro-chip macro-protein">Protein ${m.protein_pct}%</span>
+      ${m.is_high_carb_low_fat ? '<span class="badge badge-hclf">HCLF</span>' : ""}
+    `;
+  } else {
+    summary.innerHTML = "";
+  }
+
+  const fileContainer = document.getElementById("macroFilePreview");
+  document.getElementById("macroFileInput").value = "";
+  if (mp.file_path) {
+    const isPdf = mp.file_path.toLowerCase().endsWith(".pdf");
+    fileContainer.innerHTML = `
+      <div class="photo-preview-wrap">
+        ${isPdf
+          ? `<a href="${mp.file_path}" target="_blank" rel="noopener" class="pdf-link">📄 ${escapeHtml(mp.file_name || "plan.pdf")}</a>`
+          : `<img src="${mp.file_path}" alt="Macro plan" class="photo-preview">`}
+        <button type="button" class="btn btn-small btn-danger" id="btnRemoveMacroFile">Remove file</button>
+      </div>
+    `;
+    document.getElementById("btnRemoveMacroFile").addEventListener("click", async () => {
+      try {
+        state.macroPlan = await api("/api/macro-plan/file", { method: "DELETE" });
+        renderMacroPlan();
+        toast("File removed");
+      } catch (e) {
+        toast(e.message, true);
+      }
+    });
+  } else {
+    fileContainer.innerHTML = `<p class="muted small">No file uploaded yet.</p>`;
+  }
+}
+
+async function saveMacroPlanTargets() {
+  const payload = {
+    target_calories: document.getElementById("macroCalories").value === "" ? null : parseFloat(document.getElementById("macroCalories").value),
+    target_carbs_g: parseFloat(document.getElementById("macroCarbs").value) || 0,
+    target_fat_g: parseFloat(document.getElementById("macroFat").value) || 0,
+    target_protein_g: parseFloat(document.getElementById("macroProtein").value) || 0,
+    notes: document.getElementById("macroNotes").value.trim(),
+  };
+  try {
+    state.macroPlan = await api("/api/macro-plan", { method: "PUT", body: JSON.stringify(payload) });
+    renderMacroPlan();
+    toast("Targets saved");
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function handleMacroFileSelected(file) {
+  if (!file) return;
+  try {
+    state.macroPlan = await apiUpload("/api/macro-plan/file", file);
+    renderMacroPlan();
+    toast("File uploaded");
   } catch (e) {
     toast(e.message, true);
   }
@@ -588,6 +748,10 @@ async function init() {
   document.getElementById("btnAddRecipe").addEventListener("click", () => openRecipeModal());
   document.getElementById("btnSaveRecipe").addEventListener("click", saveRecipe);
   document.getElementById("btnAddIngredientRow").addEventListener("click", () => addIngredientRow({}));
+  document.getElementById("recipePhotoInput").addEventListener("change", e => handleRecipePhotoSelected(e.target.files[0]));
+
+  document.getElementById("btnSaveMacroPlan").addEventListener("click", saveMacroPlanTargets);
+  document.getElementById("macroFileInput").addEventListener("change", e => handleMacroFileSelected(e.target.files[0]));
 
   document.getElementById("btnAddStaple").addEventListener("click", () => openStapleModal());
   document.getElementById("btnSaveStaple").addEventListener("click", saveStaple);
@@ -603,7 +767,7 @@ async function init() {
   });
 
   toggleHclfThresholds();
-  await Promise.all([loadRecipes(), loadStaples(), loadPlanHistory()]);
+  await Promise.all([loadRecipes(), loadStaples(), loadPlanHistory(), loadMacroPlan()]);
   renderPlanEntries();
 }
 

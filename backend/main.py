@@ -1,6 +1,7 @@
 import os
+import uuid
 from urllib.parse import quote
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -10,10 +11,43 @@ from backend import database as db
 
 app = FastAPI(title="Meal Planner & Shopping List API")
 
+UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"}
+ALLOWED_PLAN_EXT = ALLOWED_IMAGE_EXT | {".pdf"}
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
+os.makedirs(os.path.join(UPLOADS_DIR, "recipes"), exist_ok=True)
+os.makedirs(os.path.join(UPLOADS_DIR, "macro_plan"), exist_ok=True)
+
 
 @app.on_event("startup")
 def startup():
     db.init_db()
+
+
+async def _save_upload(file: UploadFile, subdir: str, allowed_ext: set) -> str:
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in allowed_ext:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext or 'unknown'}")
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="File too large (max 8MB)")
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="File is empty")
+    filename = f"{uuid.uuid4().hex}{ext}"
+    dest_dir = os.path.join(UPLOADS_DIR, subdir)
+    os.makedirs(dest_dir, exist_ok=True)
+    with open(os.path.join(dest_dir, filename), "wb") as f:
+        f.write(content)
+    return f"/uploads/{subdir}/{filename}"
+
+
+def _delete_upload(url_path: Optional[str]):
+    if not url_path or not url_path.startswith("/uploads/"):
+        return
+    disk_path = os.path.join(UPLOADS_DIR, url_path[len("/uploads/"):])
+    if os.path.commonpath([os.path.abspath(disk_path), UPLOADS_DIR]) == UPLOADS_DIR and os.path.isfile(disk_path):
+        os.remove(disk_path)
 
 
 # ── Request models ───────────────────────────────────────────────────────────
@@ -53,6 +87,14 @@ class PlanIn(BaseModel):
     people: int = Field(..., gt=0)
     label: str = ""
     entries: list[PlanEntryIn]
+
+
+class MacroPlanIn(BaseModel):
+    target_calories: Optional[float] = None
+    target_carbs_g: float = 0
+    target_fat_g: float = 0
+    target_protein_g: float = 0
+    notes: str = ""
 
 
 # ── Recipes ──────────────────────────────────────────────────────────────────
@@ -101,6 +143,27 @@ def update_recipe(recipe_id: int, body: RecipeIn):
 def delete_recipe(recipe_id: int):
     if not db.delete_recipe(recipe_id):
         raise HTTPException(status_code=404, detail="Recipe not found")
+
+
+@app.post("/api/recipes/{recipe_id}/photo")
+async def upload_recipe_photo(recipe_id: int, file: UploadFile = File(...)):
+    recipe = db.get_recipe(recipe_id)
+    if recipe is None:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    url = await _save_upload(file, "recipes", ALLOWED_IMAGE_EXT)
+    _delete_upload(recipe.get("photo_path"))
+    db.set_recipe_photo(recipe_id, url)
+    return db.get_recipe(recipe_id)
+
+
+@app.delete("/api/recipes/{recipe_id}/photo")
+def delete_recipe_photo(recipe_id: int):
+    recipe = db.get_recipe(recipe_id)
+    if recipe is None:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    _delete_upload(recipe.get("photo_path"))
+    db.clear_recipe_photo(recipe_id)
+    return db.get_recipe(recipe_id)
 
 
 # ── Staples (standard weekly-shop items) ─────────────────────────────────────
@@ -169,11 +232,42 @@ def get_shopping_list(plan_id: int):
     return result
 
 
+# ── Macro / calorie plan ──────────────────────────────────────────────────────
+
+@app.get("/api/macro-plan")
+def get_macro_plan():
+    return db.get_macro_plan()
+
+
+@app.put("/api/macro-plan")
+def update_macro_plan(body: MacroPlanIn):
+    return db.update_macro_plan(
+        body.target_calories, body.target_carbs_g, body.target_fat_g,
+        body.target_protein_g, body.notes.strip(),
+    )
+
+
+@app.post("/api/macro-plan/file")
+async def upload_macro_plan_file(file: UploadFile = File(...)):
+    url = await _save_upload(file, "macro_plan", ALLOWED_PLAN_EXT)
+    current = db.get_macro_plan()
+    _delete_upload(current.get("file_path"))
+    return db.set_macro_plan_file(url, file.filename)
+
+
+@app.delete("/api/macro-plan/file")
+def delete_macro_plan_file():
+    current = db.get_macro_plan()
+    _delete_upload(current.get("file_path"))
+    return db.clear_macro_plan_file()
+
+
 # ── Static files / SPA fallback ───────────────────────────────────────────────
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 
 @app.get("/")

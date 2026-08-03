@@ -183,6 +183,15 @@ input:focus, select:focus, textarea:focus {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 14px 16px;
+  overflow: hidden;
+}
+
+.recipe-photo {
+  display: block;
+  width: calc(100% + 32px);
+  margin: -14px -16px 10px;
+  max-height: 160px;
+  object-fit: cover;
 }
 
 .recipe-card-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -226,6 +235,38 @@ input:focus, select:focus, textarea:focus {
   align-items: center;
 }
 .ingredient-row > * { min-width: 0; }
+
+/* ── Photo / file uploads ───────────────────────────────────────── */
+
+.file-input {
+  display: block;
+  width: 100%;
+  font-size: 0.85rem;
+  margin: 8px 0 14px;
+}
+
+.photo-preview-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.photo-preview {
+  width: 160px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #f1f0ec;
+}
+
+.pdf-link {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--green-dark);
+}
 
 /* ── Staples ────────────────────────────────────────────────────── */
 
