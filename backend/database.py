@@ -2,7 +2,8 @@ import sqlite3
 import os
 from datetime import datetime
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "mealplanner.db")
+DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(__file__))
+DB_PATH = os.path.join(DATA_DIR, "mealplanner.db")
 
 CATEGORIES = [
     "Produce", "Meat & Fish", "Dairy & Eggs", "Bakery",

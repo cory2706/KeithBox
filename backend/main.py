@@ -11,7 +11,7 @@ from backend import database as db
 
 app = FastAPI(title="Meal Planner & Shopping List API")
 
-UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+UPLOADS_DIR = os.path.join(db.DATA_DIR, "uploads")
 ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"}
 ALLOWED_PLAN_EXT = ALLOWED_IMAGE_EXT | {".pdf"}
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
