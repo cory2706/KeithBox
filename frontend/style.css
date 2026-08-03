@@ -225,6 +225,7 @@ input:focus, select:focus, textarea:focus {
   margin-bottom: 8px;
   align-items: center;
 }
+.ingredient-row > * { min-width: 0; }
 
 /* ── Staples ────────────────────────────────────────────────────── */
 
