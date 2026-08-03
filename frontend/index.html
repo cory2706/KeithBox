@@ -1,194 +1,210 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Black Book</title>
-  <link rel="stylesheet" href="/static/style.css" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meal Planner &amp; Shopping List</title>
+<link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════════════════ SIDEBAR ══ -->
-<aside class="sidebar">
-  <div class="sidebar-header">
-    <h1 class="app-title">Black Book</h1>
-    <p class="app-subtitle">Personal Intelligence</p>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-icon">🥗</span>
+    <span class="brand-name">Meal Planner</span>
   </div>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="plan">Plan Builder</button>
+    <button class="tab-btn" data-tab="recipes">Recipes</button>
+    <button class="tab-btn" data-tab="staples">Regular Items</button>
+    <button class="tab-btn" data-tab="shopping">Shopping List</button>
+  </nav>
+</header>
 
-  <div class="sidebar-search">
-    <div class="search-wrap">
-      <svg class="search-icon" viewBox="0 0 20 20" fill="none">
-        <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.5"/>
-        <path d="M13.5 13.5L17 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-      </svg>
-      <input id="searchInput" type="text" placeholder="Search people & notes…" autocomplete="off" />
-      <button id="clearSearch" class="clear-search" aria-label="Clear search" hidden>
-        <svg viewBox="0 0 14 14" fill="none"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-      </button>
-    </div>
-  </div>
+<main class="content">
 
-  <div class="sidebar-actions">
-    <button id="addPersonBtn" class="btn-add-person">
-      <svg viewBox="0 0 20 20" fill="none">
-        <path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-      </svg>
-      Add Person
-    </button>
-  </div>
-
-  <div class="sidebar-list-label" id="listLabel">All Contacts</div>
-  <div id="peopleList" class="people-list"></div>
-</aside>
-
-<!-- ═══════════════════════════════════════════════════ MAIN ══ -->
-<main class="main-panel" id="mainPanel">
-  <!-- Empty state -->
-  <div id="emptyState" class="empty-state">
-    <div class="empty-icon">
-      <svg viewBox="0 0 80 80" fill="none">
-        <rect x="15" y="10" width="50" height="60" rx="4" stroke="currentColor" stroke-width="2"/>
-        <path d="M25 25h30M25 35h30M25 45h20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        <circle cx="55" cy="55" r="10" fill="#0a0a0a" stroke="currentColor" stroke-width="1.5"/>
-        <path d="M51 55h8M55 51v8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-      </svg>
-    </div>
-    <h2>Your Black Book</h2>
-    <p>Select a contact to view their profile,<br>or add a new person to get started.</p>
-    <button id="emptyAddBtn" class="btn-primary">Add Your First Contact</button>
-  </div>
-
-  <!-- Person detail (hidden until selected) -->
-  <div id="personDetail" class="person-detail" hidden>
-
-    <!-- Person header -->
-    <div class="person-header">
-      <div class="person-header-left">
-        <div class="person-avatar" id="personAvatar"></div>
-        <div class="person-meta">
-          <h2 id="personName"></h2>
-          <div class="person-meta-row">
-            <span id="personRelBadge" class="rel-badge"></span>
-            <div id="personTags" class="tags-row"></div>
-          </div>
-        </div>
+  <!-- ── PLAN BUILDER ─────────────────────────────────────────────── -->
+  <section id="tab-plan" class="tab-panel active">
+    <div class="panel-card">
+      <h2>Build your meal plan</h2>
+      <div class="form-grid">
+        <label>Number of days
+          <input type="number" id="planDays" min="1" value="7">
+        </label>
+        <label>People cooking for
+          <input type="number" id="planPeople" min="1" value="2">
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="planHclf" checked>
+          High-carb / low-fat only
+        </label>
       </div>
-      <div class="person-header-actions">
-        <button id="editPersonBtn" class="btn-icon" title="Edit contact">
-          <svg viewBox="0 0 20 20" fill="none">
-            <path d="M14.5 3.5l2 2L6 16H4v-2L14.5 3.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-          </svg>
-        </button>
-        <button id="deletePersonBtn" class="btn-icon btn-danger" title="Delete contact">
-          <svg viewBox="0 0 20 20" fill="none">
-            <path d="M5 7h10l-1 9H6L5 7z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-            <path d="M3 7h14M8 7V5h4v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          </svg>
-        </button>
+      <div class="form-grid" id="hclfThresholds">
+        <label>Max fat % of calories
+          <input type="number" id="maxFatPct" min="0" max="100" value="20">
+        </label>
+        <label>Min carb % of calories
+          <input type="number" id="minCarbPct" min="0" max="100" value="55">
+        </label>
+      </div>
+      <button class="btn btn-primary" id="btnSuggest">Suggest recipes</button>
+    </div>
+
+    <div class="panel-card">
+      <div class="panel-card-header">
+        <h2>Suggested recipes</h2>
+        <span class="muted" id="nightsProgress">0 / 7 nights covered</span>
+      </div>
+      <p class="muted small">Tick a recipe to add it to the plan. If you're eating leftovers, set "nights" higher than 1 so one cook covers several dinners.</p>
+      <div id="suggestList" class="suggest-list">
+        <p class="empty-state">Click "Suggest recipes" to see matches, or add some recipes first.</p>
       </div>
     </div>
 
-    <!-- Tab bar -->
-    <div class="tab-bar">
-      <button class="tab-btn active" data-tab="notes">Notes</button>
-      <button class="tab-btn" data-tab="briefing">Briefing</button>
+    <div class="panel-card">
+      <h2>This plan</h2>
+      <div id="planEntries" class="plan-entries">
+        <p class="empty-state">No meals selected yet.</p>
+      </div>
+      <label class="inline-label">Label (optional)
+        <input type="text" id="planLabel" placeholder="e.g. Week of 3 Aug">
+      </label>
+      <button class="btn btn-primary" id="btnGeneratePlan">Generate shopping list</button>
     </div>
+  </section>
 
-    <!-- Notes tab -->
-    <div id="tabNotes" class="tab-content">
-      <div id="notesList" class="notes-list"></div>
+  <!-- ── RECIPES ──────────────────────────────────────────────────── -->
+  <section id="tab-recipes" class="tab-panel">
+    <div class="panel-card-header">
+      <h2>Your recipes</h2>
+      <button class="btn btn-primary" id="btnAddRecipe">+ Add recipe</button>
+    </div>
+    <div id="recipeList" class="card-grid"></div>
+  </section>
 
-      <!-- Add note area -->
-      <div class="add-note-area">
-        <div class="add-note-header">
-          <span class="add-note-label">New Note</span>
-          <select id="noteType" class="note-type-select">
-            <option value="general">General</option>
-            <option value="meeting">Meeting</option>
-            <option value="personal">Personal</option>
-            <option value="context">Context</option>
-          </select>
+  <!-- ── STAPLES ──────────────────────────────────────────────────── -->
+  <section id="tab-staples" class="tab-panel">
+    <div class="panel-card">
+      <div class="panel-card-header">
+        <h2>Regular weekly-shop items</h2>
+        <button class="btn btn-primary" id="btnAddStaple">+ Add item</button>
+      </div>
+      <p class="muted small">These are added to every shopping list automatically — milk, bread, coffee, cleaning products, whatever you always need regardless of what's being cooked.</p>
+      <div id="stapleList" class="staple-list"></div>
+    </div>
+  </section>
+
+  <!-- ── SHOPPING LIST ────────────────────────────────────────────── -->
+  <section id="tab-shopping" class="tab-panel">
+    <div class="panel-card">
+      <div class="panel-card-header">
+        <h2>Shopping list</h2>
+        <div class="btn-row">
+          <button class="btn" id="btnCopyList">Copy list</button>
+          <button class="btn" id="btnOpenTesco">Open Tesco Groceries ↗</button>
         </div>
-        <div class="textarea-wrap">
-          <textarea id="noteContent" placeholder="Start typing, or press the mic to dictate…" rows="3"></textarea>
-        </div>
-        <div class="add-note-footer">
-          <button id="micBtn" class="btn-mic" title="Start voice dictation" aria-label="Toggle voice dictation">
-            <svg class="mic-icon" viewBox="0 0 24 24" fill="none">
-              <rect x="8" y="2" width="8" height="13" rx="4" stroke="currentColor" stroke-width="1.8"/>
-              <path d="M5 10a7 7 0 0014 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-              <path d="M12 20v-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-              <path d="M9 20h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-            </svg>
-            <span class="mic-ripple"></span>
-          </button>
-          <button id="submitNote" class="btn-primary">Save Note</button>
-        </div>
+      </div>
+      <p class="muted small" id="shoppingMeta"></p>
+      <p class="tesco-note">
+        Tesco doesn't offer a public API for placing delivery orders automatically, so a bot can't add
+        items to your basket for you. Each item below links straight to its Tesco search results —
+        click through and "add to trolley" takes one tap per item. "Copy list" gives you a plain-text
+        version too, for pasting anywhere.
+      </p>
+      <div id="shoppingItems" class="shopping-items">
+        <p class="empty-state">Generate a plan to see your shopping list here.</p>
       </div>
     </div>
 
-    <!-- Briefing tab -->
-    <div id="tabBriefing" class="tab-content" hidden>
-      <div id="briefingContent" class="briefing-content"></div>
+    <div class="panel-card">
+      <h2>Past plans</h2>
+      <div id="planHistory" class="plan-history"></div>
     </div>
+  </section>
 
-  </div>
 </main>
 
-
-<!-- ═══════════════════════════════════ MODAL: Add/Edit Person ══ -->
-<div id="personModal" class="modal-overlay" hidden>
+<!-- ── RECIPE MODAL ───────────────────────────────────────────────── -->
+<div class="modal-backdrop" id="recipeModal">
   <div class="modal">
     <div class="modal-header">
-      <h3 id="modalTitle">Add Person</h3>
-      <button class="modal-close" id="closePersonModal" aria-label="Close">
-        <svg viewBox="0 0 14 14" fill="none"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-      </button>
+      <h3 id="recipeModalTitle">Add recipe</h3>
+      <button class="modal-close" data-close="recipeModal">&times;</button>
     </div>
     <div class="modal-body">
-      <label class="form-label">Name <span class="req">*</span></label>
-      <input id="modalName" type="text" class="form-input" placeholder="Full name" />
+      <input type="hidden" id="recipeId">
+      <div class="form-grid">
+        <label>Recipe name
+          <input type="text" id="recipeName" placeholder="e.g. Chicken &amp; rice stir fry">
+        </label>
+        <label>Servings (as cooked)
+          <input type="number" id="recipeServings" min="1" value="4">
+        </label>
+      </div>
+      <p class="muted small">Macros per serving — used to work out high-carb / low-fat matches.</p>
+      <div class="form-grid form-grid-4">
+        <label>Calories (optional)
+          <input type="number" id="recipeCalories" min="0">
+        </label>
+        <label>Carbs (g)
+          <input type="number" id="recipeCarbs" min="0" value="0">
+        </label>
+        <label>Fat (g)
+          <input type="number" id="recipeFat" min="0" value="0">
+        </label>
+        <label>Protein (g)
+          <input type="number" id="recipeProtein" min="0" value="0">
+        </label>
+      </div>
+      <label>Notes / method (optional)
+        <textarea id="recipeNotes" rows="2" placeholder="Cooking notes..."></textarea>
+      </label>
 
-      <label class="form-label">Relationship</label>
-      <select id="modalRelationship" class="form-input">
-        <option value="contact">Contact</option>
-        <option value="friend">Friend</option>
-        <option value="colleague">Colleague</option>
-        <option value="family">Family</option>
-        <option value="other">Other</option>
-      </select>
-
-      <label class="form-label">Tags <span class="form-hint">(comma-separated)</span></label>
-      <input id="modalTags" type="text" class="form-input" placeholder="investor, NYC, tech…" />
+      <div class="ingredients-header">
+        <h4>Ingredients</h4>
+        <button class="btn btn-small" id="btnAddIngredientRow">+ Ingredient</button>
+      </div>
+      <div id="ingredientRows"></div>
     </div>
     <div class="modal-footer">
-      <button id="cancelPersonModal" class="btn-ghost">Cancel</button>
-      <button id="savePersonBtn" class="btn-primary">Save</button>
+      <button class="btn" data-close="recipeModal">Cancel</button>
+      <button class="btn btn-primary" id="btnSaveRecipe">Save recipe</button>
     </div>
   </div>
 </div>
 
-
-<!-- ═══════════════════════════════════ MODAL: Confirm Delete ══ -->
-<div id="confirmModal" class="modal-overlay" hidden>
-  <div class="modal modal-sm">
+<!-- ── STAPLE MODAL ───────────────────────────────────────────────── -->
+<div class="modal-backdrop" id="stapleModal">
+  <div class="modal modal-small">
     <div class="modal-header">
-      <h3 id="confirmTitle">Confirm Delete</h3>
+      <h3 id="stapleModalTitle">Add regular item</h3>
+      <button class="modal-close" data-close="stapleModal">&times;</button>
     </div>
     <div class="modal-body">
-      <p id="confirmMessage" class="confirm-msg"></p>
+      <input type="hidden" id="stapleId">
+      <label>Item name
+        <input type="text" id="stapleName" placeholder="e.g. Milk">
+      </label>
+      <div class="form-grid">
+        <label>Quantity
+          <input type="number" id="stapleQuantity" min="0" value="1">
+        </label>
+        <label>Unit
+          <input type="text" id="stapleUnit" placeholder="e.g. pints">
+        </label>
+      </div>
+      <label>Category
+        <select id="stapleCategory"></select>
+      </label>
     </div>
     <div class="modal-footer">
-      <button id="confirmCancel" class="btn-ghost">Cancel</button>
-      <button id="confirmOk" class="btn-danger-solid">Delete</button>
+      <button class="btn" data-close="stapleModal">Cancel</button>
+      <button class="btn btn-primary" id="btnSaveStaple">Save item</button>
     </div>
   </div>
 </div>
 
-<!-- Toast -->
-<div id="toast" class="toast" hidden></div>
+<div class="toast" id="toast"></div>
 
 <script src="/static/app.js"></script>
 </body>
