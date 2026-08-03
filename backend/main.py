@@ -82,11 +82,16 @@ class PlanEntryIn(BaseModel):
     nights: int = Field(1, gt=0)
 
 
+VALID_SCALE_METRICS = {"calories", "carbs", "fat", "protein"}
+
+
 class PlanIn(BaseModel):
     days: int = Field(..., gt=0)
     people: int = Field(..., gt=0)
     label: str = ""
     entries: list[PlanEntryIn]
+    scale_to_macros: bool = False
+    scale_metric: str = "calories"
 
 
 class MacroPlanIn(BaseModel):
@@ -204,7 +209,11 @@ def create_plan(body: PlanIn):
     for e in body.entries:
         if db.get_recipe(e.recipe_id) is None:
             raise HTTPException(status_code=400, detail=f"Recipe {e.recipe_id} not found")
-    plan_id = db.create_plan(body.days, body.people, body.label.strip(), [e.model_dump() for e in body.entries])
+    metric = body.scale_metric if body.scale_metric in VALID_SCALE_METRICS else "calories"
+    plan_id = db.create_plan(
+        body.days, body.people, body.label.strip(), [e.model_dump() for e in body.entries],
+        body.scale_to_macros, metric,
+    )
     return db.get_plan(plan_id)
 
 

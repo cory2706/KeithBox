@@ -60,6 +60,8 @@ def init_db():
                 days INTEGER NOT NULL,
                 people INTEGER NOT NULL,
                 label TEXT DEFAULT '',
+                scale_to_macros INTEGER NOT NULL DEFAULT 0,
+                scale_metric TEXT NOT NULL DEFAULT 'calories',
                 created_at TEXT NOT NULL
             );
 
@@ -94,6 +96,15 @@ def init_db():
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(recipes)").fetchall()]
         if "photo_path" not in cols:
             conn.execute("ALTER TABLE recipes ADD COLUMN photo_path TEXT")
+            conn.commit()
+
+        # Migration: add macro-scaling columns to plans created before they existed.
+        plan_cols = [r["name"] for r in conn.execute("PRAGMA table_info(plans)").fetchall()]
+        if "scale_to_macros" not in plan_cols:
+            conn.execute("ALTER TABLE plans ADD COLUMN scale_to_macros INTEGER NOT NULL DEFAULT 0")
+            conn.commit()
+        if "scale_metric" not in plan_cols:
+            conn.execute("ALTER TABLE plans ADD COLUMN scale_metric TEXT NOT NULL DEFAULT 'calories'")
             conn.commit()
 
         conn.execute(
@@ -301,13 +312,14 @@ def delete_staple(staple_id: int) -> bool:
 
 # ── Plans & shopping list ───────────────────────────────────────────────────
 
-def create_plan(days, people, label, entries):
+def create_plan(days, people, label, entries, scale_to_macros=False, scale_metric="calories"):
     now = datetime.utcnow().isoformat()
     conn = get_connection()
     try:
         cur = conn.execute(
-            "INSERT INTO plans (days, people, label, created_at) VALUES (?,?,?,?)",
-            (days, people, label, now),
+            """INSERT INTO plans (days, people, label, scale_to_macros, scale_metric, created_at)
+               VALUES (?,?,?,?,?,?)""",
+            (days, people, label, 1 if scale_to_macros else 0, scale_metric, now),
         )
         plan_id = cur.lastrowid
         for idx, e in enumerate(entries):
@@ -360,11 +372,40 @@ def delete_plan(plan_id: int) -> bool:
         conn.close()
 
 
+METRIC_LABELS = {"calories": "calories", "carbs": "carbs", "fat": "fat", "protein": "protein"}
+
+
+def _metric_target_and_recipe_value(metric, macro_plan, recipe):
+    if metric == "carbs":
+        return macro_plan["target_carbs_g"], recipe["carbs_g"]
+    if metric == "fat":
+        return macro_plan["target_fat_g"], recipe["fat_g"]
+    if metric == "protein":
+        return macro_plan["target_protein_g"], recipe["protein_g"]
+    return macro_plan["target_calories"], recipe["macros"]["calories"]
+
+
+def portion_factor_for_recipe(recipe, macro_plan, metric):
+    """How many recipe servings one person should eat to hit the macro target
+    for the chosen metric (e.g. 1.7 servings to hit a 800 kcal target from a
+    474 kcal/serving recipe). Falls back to 1 (i.e. no adjustment) when the
+    target or the recipe's value for that metric isn't set."""
+    target_val, recipe_val = _metric_target_and_recipe_value(metric, macro_plan, recipe)
+    if not target_val or not recipe_val or recipe_val <= 0:
+        return 1.0
+    return round(target_val / recipe_val, 3)
+
+
 def build_shopping_list(plan_id: int):
-    """Aggregate recipe ingredients (scaled by people/servings/nights) plus staples."""
+    """Aggregate recipe ingredients (scaled by people/servings/nights, and
+    optionally by how the recipe's macros compare to the daily macro-plan
+    target) plus staples."""
     plan = get_plan(plan_id)
     if plan is None:
         return None
+
+    macro_plan = get_macro_plan() if plan.get("scale_to_macros") else None
+    metric = plan.get("scale_metric") or "calories"
 
     conn = get_connection()
     try:
@@ -375,7 +416,9 @@ def build_shopping_list(plan_id: int):
             if recipe is None:
                 continue
             servings = recipe["servings"] or 1
-            multiplier = (plan["people"] / servings) * entry["nights"]
+            portion_factor = portion_factor_for_recipe(recipe, macro_plan, metric) if macro_plan else 1.0
+            entry["portion_factor"] = portion_factor
+            multiplier = (plan["people"] / servings) * entry["nights"] * portion_factor
             for ing in recipe["ingredients"]:
                 key = (ing["name"].strip().lower(), ing["unit"].strip().lower())
                 qty = (ing["quantity"] or 0) * multiplier

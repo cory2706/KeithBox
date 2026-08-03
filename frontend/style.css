@@ -352,6 +352,16 @@ input:focus, select:focus, textarea:focus {
 
 .tesco-link { font-size: 0.78rem; color: var(--green-dark); white-space: nowrap; }
 
+.scaling-note {
+  background: var(--green-light);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  margin: 10px 0;
+}
+.scaling-note strong { display: block; margin-bottom: 6px; }
+.scaling-note .macro-chip { background: #fff; margin-right: 4px; }
+
 .history-row {
   display: flex;
   align-items: center;

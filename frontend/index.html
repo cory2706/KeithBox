@@ -67,6 +67,23 @@
       <div id="planEntries" class="plan-entries">
         <p class="empty-state">No meals selected yet.</p>
       </div>
+
+      <label class="checkbox-label">
+        <input type="checkbox" id="planScaleToMacros">
+        Scale portions to hit your macro targets
+      </label>
+      <p class="muted small" id="scaleMacroHint"></p>
+      <div class="form-grid" id="scaleMetricRow" style="display:none;">
+        <label>Match target
+          <select id="planScaleMetric">
+            <option value="calories">Calories</option>
+            <option value="carbs">Carbs</option>
+            <option value="fat">Fat</option>
+            <option value="protein">Protein</option>
+          </select>
+        </label>
+      </div>
+
       <label class="inline-label">Label (optional)
         <input type="text" id="planLabel" placeholder="e.g. Week of 3 Aug">
       </label>
@@ -86,8 +103,8 @@
   <!-- ── MACRO / CALORIE PLAN ────────────────────────────────────────── -->
   <section id="tab-macros" class="tab-panel">
     <div class="panel-card">
-      <h2>Daily targets</h2>
-      <p class="muted small">Set the calorie/macro targets you're working towards — used as a reference alongside each recipe's per-serving breakdown.</p>
+      <h2>Per-person meal targets</h2>
+      <p class="muted small">What one person should eat in a meal — the same units as a recipe's "per serving" macros. In the Plan Builder you can scale each recipe's portion size up or down so it actually hits this target, instead of always using exactly 1 recipe serving per person.</p>
       <div class="form-grid form-grid-4">
         <label>Calories (optional)
           <input type="number" id="macroCalories" min="0">
@@ -140,6 +157,7 @@
         </div>
       </div>
       <p class="muted small" id="shoppingMeta"></p>
+      <div id="shoppingScaling"></div>
       <p class="tesco-note">
         Tesco doesn't offer a public API for placing delivery orders automatically, so a bot can't add
         items to your basket for you. Each item below links straight to its Tesco search results —

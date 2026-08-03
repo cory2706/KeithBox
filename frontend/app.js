@@ -370,6 +370,8 @@ async function saveMacroPlanTargets() {
   try {
     state.macroPlan = await api("/api/macro-plan", { method: "PUT", body: JSON.stringify(payload) });
     renderMacroPlan();
+    updateScaleMacroHint();
+    renderPlanEntries();
     toast("Targets saved");
   } catch (e) {
     toast(e.message, true);
@@ -487,6 +489,50 @@ function toggleHclfThresholds() {
   document.getElementById("hclfThresholds").style.display = on ? "grid" : "none";
 }
 
+const METRIC_LABELS = { calories: "calories", carbs: "carbs", fat: "fat", protein: "protein" };
+
+function currentScaleMetric() {
+  return document.getElementById("planScaleMetric").value;
+}
+
+function metricTargetAndRecipeValue(metric, recipe) {
+  const mp = state.macroPlan;
+  if (!mp) return [null, null];
+  if (metric === "carbs") return [mp.target_carbs_g, recipe.carbs_g];
+  if (metric === "fat") return [mp.target_fat_g, recipe.fat_g];
+  if (metric === "protein") return [mp.target_protein_g, recipe.protein_g];
+  return [mp.target_calories, recipe.macros.calories];
+}
+
+function computePortionFactor(recipe, metric) {
+  const [targetVal, recipeVal] = metricTargetAndRecipeValue(metric, recipe);
+  if (!targetVal || !recipeVal || recipeVal <= 0) return 1;
+  return Math.round((targetVal / recipeVal) * 1000) / 1000;
+}
+
+function toggleScaleMetricRow() {
+  const on = document.getElementById("planScaleToMacros").checked;
+  document.getElementById("scaleMetricRow").style.display = on ? "grid" : "none";
+  renderPlanEntries();
+}
+
+function updateScaleMacroHint() {
+  const metric = currentScaleMetric();
+  const mp = state.macroPlan;
+  const [targetVal] = metricTargetAndRecipeValue(metric, { carbs_g: 0, fat_g: 0, protein_g: 0, macros: { calories: 0 } });
+  const hint = document.getElementById("scaleMacroHint");
+  const checkbox = document.getElementById("planScaleToMacros");
+  if (!mp || !targetVal) {
+    hint.textContent = `No ${METRIC_LABELS[metric]} target set yet — set one on the Macro Plan tab first.`;
+    checkbox.disabled = true;
+    checkbox.checked = false;
+    document.getElementById("scaleMetricRow").style.display = "none";
+  } else {
+    hint.textContent = `Portions will be scaled so each person's serving hits ${targetVal} ${metric === "calories" ? "kcal" : "g"} of ${METRIC_LABELS[metric]}.`;
+    checkbox.disabled = false;
+  }
+}
+
 async function suggestRecipes() {
   const hclf = document.getElementById("planHclf").checked;
   const params = new URLSearchParams();
@@ -552,6 +598,8 @@ function renderPlanEntries() {
   const container = document.getElementById("planEntries");
   const ids = Object.keys(state.planSelections);
   const days = parseInt(document.getElementById("planDays").value, 10) || 0;
+  const scaling = document.getElementById("planScaleToMacros").checked;
+  const metric = currentScaleMetric();
 
   if (ids.length === 0) {
     container.innerHTML = `<p class="empty-state">No meals selected yet.</p>`;
@@ -559,9 +607,10 @@ function renderPlanEntries() {
     container.innerHTML = ids.map(id => {
       const recipe = state.recipes.find(r => r.id === Number(id)) || state.suggestions.find(r => r.id === Number(id));
       const nights = state.planSelections[id];
+      const factor = scaling && recipe ? computePortionFactor(recipe, metric) : 1;
       return `<div class="plan-entry-row">
         <span>${recipe ? escapeHtml(recipe.name) : `Recipe #${id}`}</span>
-        <span class="muted small">${nights} night${nights === 1 ? "" : "s"}</span>
+        <span class="muted small">${nights} night${nights === 1 ? "" : "s"}${factor !== 1 ? ` · ${factor}× serving` : ""}</span>
       </div>`;
     }).join("");
   }
@@ -576,6 +625,8 @@ async function generatePlan() {
   const days = parseInt(document.getElementById("planDays").value, 10);
   const people = parseInt(document.getElementById("planPeople").value, 10);
   const label = document.getElementById("planLabel").value.trim();
+  const scale_to_macros = document.getElementById("planScaleToMacros").checked;
+  const scale_metric = currentScaleMetric();
   const entries = Object.entries(state.planSelections).map(([recipe_id, nights]) => ({
     recipe_id: Number(recipe_id), nights,
   }));
@@ -586,7 +637,7 @@ async function generatePlan() {
   try {
     const plan = await api("/api/plans", {
       method: "POST",
-      body: JSON.stringify({ days, people, label, entries }),
+      body: JSON.stringify({ days, people, label, entries, scale_to_macros, scale_metric }),
     });
     toast("Plan created");
     state.planSelections = {};
@@ -635,7 +686,18 @@ function renderShoppingList() {
   }
 
   const plan = data.plan;
-  meta.textContent = `${plan.label ? plan.label + " · " : ""}${plan.days} days · ${plan.people} people · ${plan.nights_covered} nights covered`;
+  meta.textContent = `${plan.label ? plan.label + " · " : ""}${plan.days} days · ${plan.people} people · ${plan.nights_covered} night${plan.nights_covered === 1 ? "" : "s"} covered`;
+
+  const scalingContainer = document.getElementById("shoppingScaling");
+  if (plan.scale_to_macros && plan.entries.some(e => e.portion_factor && e.portion_factor !== 1)) {
+    scalingContainer.innerHTML = `
+      <div class="scaling-note">
+        <strong>Portions scaled to hit your ${METRIC_LABELS[plan.scale_metric] || plan.scale_metric} target:</strong>
+        ${plan.entries.map(e => `<span class="macro-chip">${escapeHtml(e.recipe_name)}: ${e.portion_factor}× serving</span>`).join(" ")}
+      </div>`;
+  } else {
+    scalingContainer.innerHTML = "";
+  }
 
   const grouped = {};
   data.items.forEach(item => {
@@ -761,6 +823,12 @@ async function init() {
   document.getElementById("btnSuggest").addEventListener("click", suggestRecipes);
   document.getElementById("btnGeneratePlan").addEventListener("click", generatePlan);
 
+  document.getElementById("planScaleToMacros").addEventListener("change", toggleScaleMetricRow);
+  document.getElementById("planScaleMetric").addEventListener("change", () => {
+    updateScaleMacroHint();
+    renderPlanEntries();
+  });
+
   document.getElementById("btnCopyList").addEventListener("click", copyShoppingList);
   document.getElementById("btnOpenTesco").addEventListener("click", () => {
     window.open("https://www.tesco.com/groceries/en-GB/", "_blank", "noopener");
@@ -768,6 +836,7 @@ async function init() {
 
   toggleHclfThresholds();
   await Promise.all([loadRecipes(), loadStaples(), loadPlanHistory(), loadMacroPlan()]);
+  updateScaleMacroHint();
   renderPlanEntries();
 }
 
